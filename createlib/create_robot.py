@@ -9,7 +9,7 @@
 # Changelog:
 #   Fixed the getMode() function
 
-import struct  
+import struct
 import time
 from createlib.packets import SensorPacketDecoder, decode
 from createlib.create_serial import SerialCommandInterface
@@ -69,7 +69,7 @@ class Create2(object):
 
     def start(self):
         """
-        Puts the Create 2 into Passive mode. 
+        Puts the Create 2 into Passive mode.
 
         You must always send the Start commandbefore sending any other commands to the OI.
         """
@@ -91,10 +91,10 @@ class Create2(object):
 
     def wake(self):
         """
-        Wake up robot. See OI spec, pg 7 under passive mode. 
+        Wake up robot. See OI spec, pg 7 under passive mode.
 
         This should reset the 5 min timer in passive mode.
-        Unfortunately, if you are using the "offical" create cable ... 
+        Unfortunately, if you are using the "offical" create cable ...
         it doesn't work! They wired it wrong:
         https://robotics.stackexchange.com/questions/7895/irobot-create-2-powering-up-after-sleep
         """
@@ -168,7 +168,7 @@ class Create2(object):
         Create2 attempts to seek the dock
         """
         self.SCI.write(OPCODES.SEEK_DOCK)
-        time.sleep(self.sleep_timer)                
+        time.sleep(self.sleep_timer)
     # ------------------ Drive Commands ------------------
 
     def drive_stop(self):
@@ -184,7 +184,7 @@ class Create2(object):
         """
         Drive motors directly: [-500, 500] mm/sec
         """
-        l_vel = self.limit(l_vel, -500, 500)        
+        l_vel = self.limit(l_vel, -500, 500)
         r_vel = self.limit(r_vel, -500, 500)
         data = struct.unpack('4B', struct.pack('>2h', r_vel, l_vel))  # write do this?
         self.SCI.write(OPCODES.DRIVE_DIRECT, data)

@@ -226,9 +226,9 @@ class TetheredDriveApp(Tk):
 
             # create drive command
 
-            cmd = (vr, vl)
+            cmd = (vl, vr)
             if cmd != self.callbackKeyLastDriveCommand:
-                self.robot.drive_direct(vr, vl)
+                self.robot.drive_direct(vl, vr)
                 self.callbackKeyLastDriveCommand = cmd
 
     def onConnect(self):
