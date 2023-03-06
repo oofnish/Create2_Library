@@ -88,6 +88,10 @@ class TetheredDriveApp(Tk):
             "R":      KeyAction("Reset",    self.direct_command, None, press_arg=self.robot.reset),
             "B":      KeyAction("Print Sensors",    self.print_sensors, None),
 
+            "Z":      KeyAction("Query Wall Signal/Cliff Signals", self.query_wall_cliff_signals, None),
+            "Y":      KeyAction("Query Group Packet ID #3", self.query_group_3, None),
+            "X":      KeyAction("LED Toggle", self.light_toggler_toggle, None),
+
             # The following actions are virtual, 'pretty output' items that do not correspond directly to actions, but
             # stand in for action groups or provide prettier name aliases
             "Space":  KeyAction("Beep", None, None),
@@ -146,6 +150,10 @@ class TetheredDriveApp(Tk):
         os.system('xset r off')
         self.bind("<Key>", self.cb_keypress)
         self.bind("<KeyRelease>", self.cb_keyrelease)
+
+        # periodic light state switcher
+        self.light_timer = None
+        self.light_state_a = False
 
     def __del__(self):
         # re-enable the xwindows key repeat.  If this doesn't run, key repeat will be stuck off, and the resulting
@@ -289,6 +297,7 @@ class TetheredDriveApp(Tk):
         """
         if self.robot:
             del self.robot
+            self.robot = None
         self.destroy()
 
     @rr
@@ -329,6 +338,56 @@ class TetheredDriveApp(Tk):
         :param vel_rot: tuple containing linear and angular acceleration (vel,rot)
         """
         self.robot.drive_direct(vel_rot[0], vel_rot[1])
+
+    @rr
+    def query_wall_cliff_signals(self):
+        sensors = self.robot.get_sensors()
+        message = "Wall Signal: {}\n\nCliff Left Signal: {}\n\nCliff Front Left Signal: {}\n\nCliff Front Right Signal: {}\n\nCliff Right Signal: {}".format(
+            sensors.wall_signal,
+            sensors.cliff_left_signal,
+            sensors.cliff_front_left_signal,
+            sensors.cliff_front_right_signal,
+            sensors.cliff_right_signal
+        )
+
+        tkinter.messagebox.showinfo("Wall Signal and Cliff Sensors", message)
+
+    @rr
+    def query_group_3(self):
+        sensors = self.robot.get_sensors()
+
+        message = "Charging State: {}\n\nVoltage: {} mV\n\nCurrent: {} mA\n\nTemperature: {} C\n\nBattery Charge: {} mAh\n\nBattery Capacity: {} mAh".format(
+            ["Not charging", "Reconditioning Charging", "Full Charging",
+             "Trickle Charging", "Waiting", "Charging Fault Condition", "Communication Error!"][sensors.charger_state],
+            sensors.voltage,
+            sensors.current,
+            sensors.temperature,
+            sensors.battery_charge,
+            sensors.battery_capacity
+        )
+
+        tkinter.messagebox.showinfo("Group Packet #3", message)
+
+    @rr
+    def light_toggle(self):
+        """
+        toggles light state between two values, tracked with light_state_a boolean
+        """
+        if self.light_state_a:
+            self.robot.led(6, 0, 0)
+            self.light_state_a = False
+        else:
+            self.robot.led(9, 255, 255)
+            self.light_state_a = True
+
+    @rr
+    def light_toggler_toggle(self):
+        if self.light_timer is None:
+            self.light_timer = cl.RepeatTimer(1.0, self.light_toggle, autostart=True)
+        else:
+            self.light_timer.stop()
+            del self.light_timer
+            self.light_timer = None
 
 
 class KeyAction:
