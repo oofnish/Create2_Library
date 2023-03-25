@@ -73,6 +73,12 @@ class TetheredDriveApp(Tk):
             "Escape": KeyAction("Quick Shutdown", None, None),
             "ESCAPE": KeyAction("", self.shutdown, None),
         }
+    def display_sensor_data(self, title: str, message: str):
+        ''' 
+        Display string in a tkinter dialog box
+        '''
+        
+        tkinter.messagebox.showinfo(title, message)
 
     def config_commands(self):
         """
@@ -88,6 +94,11 @@ class TetheredDriveApp(Tk):
             "D":      KeyAction("Dock",     self.direct_command, None, press_arg=self.robot.dock),
             "R":      KeyAction("Reset",    self.direct_command, None, press_arg=self.robot.reset),
             "B":      KeyAction("Print Sensors",    self.print_sensors, None),
+            "U":      KeyAction("Distance Driving - Light Sensors", self.distance_driving_light_sensors(), None),
+            "V":      KeyAction("Drive Direct - Detect Light Sensors", self.drive_direct_light_sensors(), None),
+            "W":      KeyAction("Drive Direct - Detect Bump and Wheel Drops", self.display_sensor_data("Drive Direct", self.drive_direct_bump_wheel_drops()), None),
+            "X":      KeyAction("Light Toggle",     self.light_toggle(), None),
+            "Y":      KeyAction("Group Packet 3",   self.display_sensor_data("Group Packet 3", self.get_group_packet_3()), None),
 
             # The following actions are virtual, 'pretty output' items that do not correspond directly to actions, but
             # stand in for action groups or provide prettier name aliases
