@@ -55,6 +55,7 @@ try:
 except ImportError:
     tkinter.messagebox.showerror('Import error', 'Please install pyserial.')
     raise
+from createlib import PeriodicEvent
 
 
 TEXTWIDTH = 100 # window width, in characters
@@ -86,6 +87,9 @@ class TetheredDriveApp(Tk):
                         "Arrows": "Motion",
                         "Escape": "Quick Shutdown",
                         "B": "Print Sensors",
+                        "X": "LED Toggle",
+                        "Y": "Query Packet ID #3",
+                        "Z": "Query Wall Signal/Cliff Signals",
                      }
 
     # Project variables appear below this comment
@@ -114,6 +118,11 @@ class TetheredDriveApp(Tk):
         Tk.__init__(self)
         self.title("iRobot Create 2 Tethered Drive")
         self.option_add('*tearOff', FALSE)
+
+        # objects for led light toggling between two states
+        self.light_toggler = PeriodicEvent(1, self.light_toggle)
+        self.light_toggler.start()
+        self.light_state_a = False
 
         self.menubar = Menu()
         self.configure(menu=self.menubar)
@@ -144,6 +153,12 @@ class TetheredDriveApp(Tk):
             str += f"{k}: {v}\n"
         return str
 
+    def display_sensor_data(self, title: str, message: str):
+        ''' 
+        Display string in a tkinter dialog box
+        '''
+        
+        tkinter.messagebox.showinfo(title, message)
 
 
     @_decorator
@@ -196,6 +211,23 @@ class TetheredDriveApp(Tk):
                 if self.robot is not None:
                     del self.robot
                 self.destroy()
+            elif k == 'X':
+                # toggle led lights on/off
+                self.light_toggle()
+            elif k == 'Y':
+                # query group packet id #3
+                packet_3_message = self.get_group_packet_3()
+                self.display_sensor_data("Group Packet 3", packet_3_message)
+            elif k == 'Z':
+                # query wall signal and cliff signals
+                self.get_wall_cliff_signals()
+            elif k == 'W':
+                self.drive_direct_bump_wheel_drops()
+            elif k == 'V':
+                self.drive_direct_light_sensors()
+            elif k == 'U':
+                ddls_message = self.distance_driving_light_sensors()
+                self.display_sensor_data(ddls_message)
             else:
                 print("not handled", repr(k))
         elif event.type == '3': # KeyRelease; need to figure out how to get constant

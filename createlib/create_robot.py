@@ -14,6 +14,7 @@ import time
 from createlib.packets import SensorPacketDecoder, decode
 from createlib.create_serial import SerialCommandInterface
 from createlib.create_oi import OPCODES, SENSOR_PACKETS, DRIVE
+from periodic_event import PeriodicEvent
 
 class Create2(object):
     """
@@ -38,6 +39,7 @@ class Create2(object):
         # setup beep as song 4
         beep_song = [64, 16]
         self.createSong(4, beep_song)
+        self.drive_direct_thread = PeriodicEvent(1, self.drive_direct())
 
     def __del__(self):
         """
@@ -198,6 +200,66 @@ class Create2(object):
         data = struct.unpack('4B', struct.pack('>2h', r_pwm, l_pwm))  # write do this?
         self.SCI.write(OPCODES.DRIVE_PWM, data)
 
+    def drive_detect_light_sensors(self):
+        # initial sensor check to make sure we're not at a wall
+        sensors = self.get_sensors()
+        if sensors.light_bumper_center_left < 1000 or \
+            sensors.light_bumper_center_right < 1000 or \
+            sensors.light_bumper_front_left < 1000 or \
+            sensors.light_bumper_front_right < 1000:
+            # start thread
+            self.drive_direct_thread.start()
+                # loop to check for sensor 
+        while self.drive_direct_thread.is_active():
+            sensors = self.get_sensors()
+            if sensors.light_bumper_center_left > 1000 or \
+                sensors.light_bumper_center_right > 1000 or \
+                sensors.light_bumper_front_left > 1000 or \
+                sensors.light_bumper_front_right > 1000:
+                self.drive_direct_thread.stop()
+            time.sleep(0.05)
+
+    def drive_direct_bump_wheel_drops(self): 
+        # initial sensor check to make sure we're not at a wall
+        sensors = self.get_sensors()
+        print("Bumps and Wheel Drops " + sensors.bumps_wheeldrops)
+        if sensors.bumps_wheeldrops == 0:
+            self.drive_direct_thread.start()
+        while self.drive_direct_thread.is_active():
+            if sensors.bumps_wheeldrops > 0:
+                self.drive_direct_thread.stop()
+            time.sleep(0.05)
+
+    def distance_driving_light_sensors(self, distance_to_travel): 
+        # initial sensor check to make sure we're not at a wall
+        time_counter = 0
+        sensors = self.get_sensors()
+        if sensors.light_bumper_center_left < 1000 or \
+            sensors.light_bumper_center_right < 1000 or \
+            sensors.light_bumper_front_left < 1000 or \
+            sensors.light_bumper_front_right < 1000:
+            # start thread
+            self.drive_direct_thread.start()
+            # start timer
+            start_time = time.perf_counter()
+            current_distance = 0
+            # loop to check for sensor 
+            while self.drive_direct_thread.is_active() or current_distance < distance_to_travel:
+                sensors = self.get_sensors()
+                if sensors.light_bumper_center_left > 1000 or \
+                    sensors.light_bumper_center_right > 1000 or \
+                    sensors.light_bumper_front_left > 1000 or \
+                    sensors.light_bumper_front_right > 1000:
+                    self.drive_direct_thread.stop()
+                time.sleep(0.05)
+                current_distance += (time.perf_counter - start_time)*500
+            end_time = time.perf_counter()
+            total_time = end_time - start_time
+            return f"Total time of trip: {total_time}\n\n Approximate distance traveled with velocity of 500 mm/s: {current_distance} mm"
+        else:
+            return "Obstacle detected!\n\n Total time of trip: 0 \n\nDistance traveled: 0"
+
+
     # ------------------------ LED ----------------------------
 
     def led(self, led_bits=0, power_color=0, power_intensity=0):
@@ -210,6 +272,17 @@ class Create2(object):
         """
         data = (led_bits, power_color, power_intensity)
         self.SCI.write(OPCODES.LED, data)
+
+    def light_toggle(self):
+        """
+        toggles light state between two values, tracked with light_state_a boolean
+        """
+        if self.light_state_a:
+            self.led(led_bits=6)
+            self.light_state_a = False
+        else:
+            self.led(led_bits=9, power_color=255, power_intensity=255)
+            self.light_state_a = True
 
     def digit_led_ascii(self, display_string):
         """
@@ -314,3 +387,24 @@ class Create2(object):
             sensors = SensorPacketDecoder(packet_byte_data)
 
             return sensors
+        
+
+    def get_group_packet_3(self):
+        sensors = self.get_sensors()
+        # need packets 21-24
+        # Charging State, Voltage, Current, Temperature, Battery Charge, Battery Capacity
+        message = "Charging State: {}\n\nVoltage: {} mV\n\nCurrent: {} mA\n\nTemperature: {} C\n\nBattery Charge: {} mAh\n\nBattery Capacity: {} mAh".format(
+            ["Not charging", "Reconditioning Charging", "Full Charging",
+            "Trickle Charging", "Waiting", "Charging Fault Condition", "Communication Error!"][sensors.charger_state],
+            sensors.voltage,
+            sensors.current,
+            sensors.temperature,
+            sensors.battery_charge,
+            sensors.battery_capacity
+        )
+        return message
+
+
+
+
+
