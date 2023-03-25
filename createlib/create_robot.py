@@ -244,7 +244,7 @@ class Create2(object):
             start_time = time.perf_counter()
             current_distance = 0
             # loop to check for sensor 
-            while self.drive_direct_thread.is_active() or current_distance < distance_to_travel:
+            while self.drive_direct_thread.is_active() and current_distance < distance_to_travel:
                 sensors = self.get_sensors()
                 if sensors.light_bumper_center_left > 1000 or \
                     sensors.light_bumper_center_right > 1000 or \
