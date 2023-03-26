@@ -11,6 +11,7 @@
 
 import struct
 import time
+import math
 from createlib.packets import SensorPacketDecoder, decode
 from createlib.create_serial import SerialCommandInterface
 from createlib.create_oi import OPCODES, SENSOR_PACKETS, DRIVE
@@ -241,7 +242,7 @@ class Create2(object):
             # start thread
             self.drive_direct_thread.start()
             # start timer
-            start_time = time.perf_counter()
+            start_time = time.perf_counter_ns()
             current_distance = 0
             # loop to check for sensor 
             while self.drive_direct_thread.is_active() and current_distance < distance_to_travel:
@@ -252,7 +253,7 @@ class Create2(object):
                     sensors.light_bumper_front_right > 1000:
                     self.drive_direct_thread.stop()
                 time.sleep(0.05)
-                current_distance = (time.perf_counter - start_time)*500
+                current_distance = ((time.perf_counter_ns() - start_time)*(math.pow(10, 9)))*500
             end_time = time.perf_counter()
             total_time = end_time - start_time
             return f"Total time of trip: {total_time}\n\n Approximate distance traveled with velocity of 500 mm/s: {current_distance} mm"
