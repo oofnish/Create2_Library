@@ -47,13 +47,14 @@ import os, sys, glob # for listing serial ports
 
 # Create Library
 import createlib as cl
+from createlib.periodic_event import PeriodicEvent
 
 try:
     import serial
 except ImportError:
     tkinter.messagebox.showerror('Import error', 'Please install pyserial.')
     raise
-from createlib import PeriodicEvent
+# from createlib import PeriodicEvent
 
 
 TEXTWIDTH = 100 # window width, in characters
@@ -73,6 +74,7 @@ class TetheredDriveApp(Tk):
             "Escape": KeyAction("Quick Shutdown", None, None),
             "ESCAPE": KeyAction("", self.shutdown, None),
         }
+
     def display_sensor_data(self, title: str, message: str):
         ''' 
         Display string in a tkinter dialog box
@@ -94,11 +96,16 @@ class TetheredDriveApp(Tk):
             "D":      KeyAction("Dock",     self.direct_command, None, press_arg=self.robot.dock),
             "R":      KeyAction("Reset",    self.direct_command, None, press_arg=self.robot.reset),
             "B":      KeyAction("Print Sensors",    self.print_sensors, None),
-            "U":      KeyAction("Distance Driving - Light Sensors", self.distance_driving_light_sensors(), None),
-            "V":      KeyAction("Drive Direct - Detect Light Sensors", self.drive_direct_light_sensors(), None),
-            "W":      KeyAction("Drive Direct - Detect Bump and Wheel Drops", self.display_sensor_data("Drive Direct", self.drive_direct_bump_wheel_drops()), None),
-            "X":      KeyAction("Light Toggle",     self.light_toggle(), None),
-            "Y":      KeyAction("Group Packet 3",   self.display_sensor_data("Group Packet 3", self.get_group_packet_3()), None),
+
+            "Z":      KeyAction("Query Wall Signal/Cliff Signals", self.query_wall_cliff_signals, None),
+            "Y":      KeyAction("Query Group Packet ID #3", self.query_group_3, None),
+            "X":      KeyAction("LED Toggle", self.light_toggler_toggle, None),
+
+            "U":      KeyAction("Distance Driving - Light Sensors", self.distance_driving_light_sensors, None, press_arg=1000),
+            "V":      KeyAction("Drive Direct - Detect Light Sensors", self.drive_direct_light_sensors, None),
+            "W":      KeyAction("Drive Direct - Detect Bump and Wheel Drops", self.drive_direct_bump_wheel_drops, None),
+            # "X":      KeyAction("Light Toggle",     self.light_toggle, None),
+            # "Y":      KeyAction("Group Packet 3",   self.display_sensor_data("Group Packet 3", self.get_group_packet_3), None),
 
             # The following actions are virtual, 'pretty output' items that do not correspond directly to actions, but
             # stand in for action groups or provide prettier name aliases
@@ -112,9 +119,9 @@ class TetheredDriveApp(Tk):
             "SPACE":  KeyAction("", self.play_song, None, press_arg=(3, [64, 16])),
             "ESCAPE": KeyAction("", self.shutdown, None),
             "UP":     KeyAction("", self.add_motion, self.add_motion,
-                                press_arg=(VELOCITYCHANGE, 0), release_arg=(-VELOCITYCHANGE, 0)),
+                                press_arg=(VELOCITYCHANGE, 0), release_arg=(0, 0)),
             "DOWN":   KeyAction("", self.add_motion, self.add_motion,
-                                press_arg=(-VELOCITYCHANGE, 0), release_arg=(VELOCITYCHANGE, 0)),
+                                press_arg=(-VELOCITYCHANGE, 0), release_arg=(0, 0)),
             "LEFT":   KeyAction("", self.add_motion, self.add_motion,
                                 press_arg=(0, ROTATIONCHANGE), release_arg=(0, -ROTATIONCHANGE)),
             "RIGHT":  KeyAction("", self.add_motion, self.add_motion,
@@ -163,6 +170,11 @@ class TetheredDriveApp(Tk):
         os.system('xset r off')
         self.bind("<Key>", self.cb_keypress)
         self.bind("<KeyRelease>", self.cb_keyrelease)
+
+        # periodic light state switcher
+        self.light_timer = None
+        self.light_state_a = False
+
 
     def __del__(self):
         # re-enable the xwindows key repeat.  If this doesn't run, key repeat will be stuck off, and the resulting
@@ -306,6 +318,7 @@ class TetheredDriveApp(Tk):
         """
         if self.robot:
             del self.robot
+            self.robot = None
         self.destroy()
 
     @rr
@@ -326,7 +339,7 @@ class TetheredDriveApp(Tk):
         command_func()
 
     @rr
-    def play_song(self, song_id, song_notes):
+    def play_song(self, song_data):
         """
         Play a song on the robot.   If song_notes is None, then it just tries to play the song number.  Otherwise, it
         sets up a song using the given number and assigns it the note values in song_notes
@@ -334,9 +347,9 @@ class TetheredDriveApp(Tk):
         :param song_notes: a list of song notes.  If None, only an existing song will attempt to play, otherwise it will
         configure the song before playing
         """
-        if song_notes:
-            self.robot.createSong(song_id, song_notes)
-        self.robot.playSong(song_id)
+        if song_data[1]:
+            self.robot.createSong(song_data[0], song_data[1])
+        self.robot.playSong(song_data[0])
 
     @rr
     def add_motion(self, vel_rot):
@@ -345,7 +358,70 @@ class TetheredDriveApp(Tk):
         tuple and forwards to send_motion
         :param vel_rot: tuple containing linear and angular acceleration (vel,rot)
         """
-        self.robot.drive_direct(vel_rot[0], vel_rot[1])
+        self.robot.drive_direct(vel_rot[0], vel_rot[0])
+
+    @rr
+    def query_wall_cliff_signals(self):
+        sensors = self.robot.get_sensors()
+        message = "Wall Signal: {}\n\nCliff Left Signal: {}\n\nCliff Front Left Signal: {}\n\nCliff Front Right Signal: {}\n\nCliff Right Signal: {}".format(
+            sensors.wall_signal,
+            sensors.cliff_left_signal,
+            sensors.cliff_front_left_signal,
+            sensors.cliff_front_right_signal,
+            sensors.cliff_right_signal
+        )
+
+        tkinter.messagebox.showinfo("Wall Signal and Cliff Sensors", message)
+
+    @rr
+    def query_group_3(self):
+        sensors = self.robot.get_sensors()
+
+        message = "Charging State: {}\n\nVoltage: {} mV\n\nCurrent: {} mA\n\nTemperature: {} C\n\nBattery Charge: {} mAh\n\nBattery Capacity: {} mAh".format(
+            ["Not charging", "Reconditioning Charging", "Full Charging",
+             "Trickle Charging", "Waiting", "Charging Fault Condition", "Communication Error!"][sensors.charger_state],
+            sensors.voltage,
+            sensors.current,
+            sensors.temperature,
+            sensors.battery_charge,
+            sensors.battery_capacity
+        )
+
+        tkinter.messagebox.showinfo("Group Packet #3", message)
+
+    @rr
+    def light_toggle(self):
+        """
+        toggles light state between two values, tracked with light_state_a boolean
+        """
+        if self.light_state_a:
+            self.robot.led(6, 0, 0)
+            self.light_state_a = False
+        else:
+            self.robot.led(9, 255, 255)
+            self.light_state_a = True
+
+    @rr
+    def light_toggler_toggle(self):
+        if self.light_timer is None:
+            self.light_timer = cl.RepeatTimer(1.0, self.light_toggle, autostart=True)
+        else:
+            self.light_timer.stop()
+            del self.light_timer
+            self.light_timer = None
+
+
+    @rr
+    def distance_driving_light_sensors(self, distance_mm):
+        self.robot.distance_driving_light_sensors(distance_mm)
+
+    @rr
+    def drive_direct_light_sensors(self):
+        self.robot.drive_detect_light_sensors()
+
+    @rr
+    def drive_direct_bump_wheel_drops(self):
+        self.robot.drive_direct_bump_wheel_drops()
 
 
 class KeyAction:

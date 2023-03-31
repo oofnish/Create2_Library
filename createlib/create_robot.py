@@ -15,7 +15,8 @@ import math
 from createlib.packets import SensorPacketDecoder, decode
 from createlib.create_serial import SerialCommandInterface
 from createlib.create_oi import OPCODES, SENSOR_PACKETS, DRIVE
-from periodic_event import PeriodicEvent
+from createlib.periodic_event import PeriodicEvent
+
 
 class Create2(object):
     """
@@ -40,7 +41,7 @@ class Create2(object):
         # setup beep as song 4
         beep_song = [64, 16]
         self.createSong(4, beep_song)
-        self.drive_direct_thread = PeriodicEvent(1, self.drive_direct())
+        self.drive_direct_thread = PeriodicEvent(0, self.drive_direct, delegate_args=(500, 500), stop_fn=self.drive_stop)
 
     def __del__(self):
         """
@@ -210,8 +211,9 @@ class Create2(object):
             sensors.light_bumper_front_right < 1000:
             # start thread
             self.drive_direct_thread.start()
+            self.drive_direct_thread.go()
                 # loop to check for sensor 
-        while self.drive_direct_thread.is_active():
+        while self.drive_direct_thread.is_active:
             sensors = self.get_sensors()
             if sensors.light_bumper_center_left > 1000 or \
                 sensors.light_bumper_center_right > 1000 or \
@@ -220,14 +222,16 @@ class Create2(object):
                 self.drive_direct_thread.stop()
             time.sleep(0.05)
 
-    def drive_direct_bump_wheel_drops(self): 
+    def drive_direct_bump_wheel_drops(self):
         # initial sensor check to make sure we're not at a wall
         sensors = self.get_sensors()
-        print("Bumps and Wheel Drops " + sensors.bumps_wheeldrops)
-        if sensors.bumps_wheeldrops == 0:
+        if not (sensors.bumps_wheeldrops.bump_left or sensors.bumps_wheeldrops.bump_right or
+                sensors.bumps_wheeldrops.wheeldrop_right or sensors.bumps_wheeldrops.wheeldrop_left):
             self.drive_direct_thread.start()
-        while self.drive_direct_thread.is_active():
-            if sensors.bumps_wheeldrops > 0:
+            self.drive_direct_thread.go()
+        while self.drive_direct_thread.is_active:
+            if (sensors.bumps_wheeldrops.bump_left or sensors.bumps_wheeldrops.bump_right or
+                    sensors.bumps_wheeldrops.wheeldrop_right or sensors.bumps_wheeldrops.wheeldrop_left):
                 self.drive_direct_thread.stop()
             time.sleep(0.05)
 
@@ -241,11 +245,12 @@ class Create2(object):
             sensors.light_bumper_front_right < 1000:
             # start thread
             self.drive_direct_thread.start()
+            self.drive_direct_thread.go()
             # start timer
             start_time = time.perf_counter_ns()
             current_distance = 0
             # loop to check for sensor 
-            while self.drive_direct_thread.is_active() and current_distance < distance_to_travel:
+            while self.drive_direct_thread.is_active and current_distance < distance_to_travel:
                 sensors = self.get_sensors()
                 if sensors.light_bumper_center_left > 1000 or \
                     sensors.light_bumper_center_right > 1000 or \
