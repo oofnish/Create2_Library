@@ -74,6 +74,13 @@ class TetheredDriveApp(Tk):
             "C": KeyAction("Connect", self.on_connect, None),
             "Escape": KeyAction("Quick Shutdown", None, None),
             "ESCAPE": KeyAction("", self.shutdown, None),
+
+            # TODO: remove these!
+            "G":      KeyAction("Begin Endless Forward Movement", self.move_endless, None),
+            "T":      KeyAction("Begin Target Movement (distance=1 meter", self.move_distance, None, press_arg=1000),
+            "W":      KeyAction("Pause Movement and Wait", self.move_pause, None),
+            "H":      KeyAction("Halt and Cancel Movement", self.move_halt, None),
+
         }
 
     def config_commands(self):
@@ -94,6 +101,11 @@ class TetheredDriveApp(Tk):
             "Z":      KeyAction("Query Wall Signal/Cliff Signals", self.query_wall_cliff_signals, None),
             "Y":      KeyAction("Query Group Packet ID #3", self.query_group_3, None),
             "X":      KeyAction("LED Toggle", self.light_toggler_toggle, None),
+
+            "G":      KeyAction("Begin Endless Forward Movement", self.move_endless, None),
+            "T":      KeyAction("Begin Target Movement (distance=1 meter", self.move_distance, None, press_arg=1000),
+            "W":      KeyAction("Pause Movement and Wait", self.move_pause, None),
+            "H":      KeyAction("Halt and Cancel Movement", self.move_halt, None),
 
             # The following actions are virtual, 'pretty output' items that do not correspond directly to actions, but
             # stand in for action groups or provide prettier name aliases
@@ -157,6 +169,13 @@ class TetheredDriveApp(Tk):
         # periodic light state switcher
         self.light_timer = None
         self.light_state_a = False
+
+        self.actions = ActionSequence(500)
+        self.bot_events = EventQueue()
+        self.actions.register_event(self.bot_events)
+        self.manually_paused = False
+
+        self.sensor_poller = None
 
     def __del__(self):
         # re-enable the xwindows key repeat.  If this doesn't run, key repeat will be stuck off, and the resulting
@@ -226,6 +245,7 @@ class TetheredDriveApp(Tk):
                 self.text.delete("1.0", END)
                 self.config_commands()
                 self.text.insert(END, self.help_text({k: a.help for (k, a) in self.key_actions.items() if a.help != ""}))
+                self.sensor_poller = cl.RepeatTimer(0.025, self.safe_drive_monitor, autostart=True)
             except Exception as e:
                 print(f"Failed. Exception - {e}")
                 self.auto_connect = False
@@ -289,8 +309,9 @@ class TetheredDriveApp(Tk):
         """
         def require_robot(self, *args, **kwargs):
             if self.robot is None:
-                tkinter.messagebox.showinfo('Error', "Robot Not Connected!")
-                return
+                pass
+                #tkinter.messagebox.showinfo('Error', "Robot Not Connected!")
+                #return
             foo(self, *args, **kwargs)
         return require_robot
 
@@ -392,6 +413,60 @@ class TetheredDriveApp(Tk):
             del self.light_timer
             self.light_timer = None
 
+    @rr
+    def move_endless(self):
+        """
+        Begin endless forward motion, that can be paused with bump/light sensors
+        """
+        self.actions.append(MoveTimeAction(200, 200, 0))
+
+
+    @rr
+    def move_distance(self, dist_in_mm):
+        """
+        Begin forward motion with a provided distance target.  The robot will move to the target, pausing if an obstacle
+        is encountered, and halting when it reaches it or the halt event is produced.
+        :param dist_in_mm: distance to move in millimeters
+        """
+        t = (dist_in_mm * 1000) / 200
+        self.actions.append(MoveTimeAction(200, 200, t))
+
+
+    @rr
+    def move_halt(self):
+        """
+        Stop any forward movement by sending a terminate event to the action queue
+        """
+        self.bot_events.put(EventFinish)
+        pass
+
+
+    @rr
+    def move_pause(self):
+        """
+        pause or resume motion manually
+        """
+        if not self.manually_paused:
+            self.bot_events.put(EventPause())
+            self.manually_paused = True
+        else:
+            self.bot_events.put(EventResume())
+            self.manually_paused = False
+        pass
+
+    @rr
+    def safe_drive_monitor(self):
+        sensors = self.robot.get_sensors()
+        pause = False
+        # Need Better Sensor handling here
+        if sensors.light_bumper != 0 or sensors.bumps_wheeldrops != 0:
+            pause = True
+
+        if pause:
+            self.bot_events.put(EventPause())
+        else:
+            self.bot_events.put(EventResume())
+
 
 class World:
     """
@@ -421,9 +496,19 @@ class MoveTimeAction:
         self.lvel = lvel
         self.total_t = t
         self.elapsed_t = 0
+        self.paused = False
+
+    def _start_motion(self):
+        # send command to start robot with configured velocities
+        pass
+
+    def _stop_motion(self):
+        # send command to stop robot
+        pass
 
     def begin(self):
         # send command to drive robot with the configured wheel velocities
+        self._start_motion()
         print("B", end="")
 
     def update(self, evt):
@@ -431,14 +516,25 @@ class MoveTimeAction:
             case EVENT_TYPE.PAUSE:
                 # halt wheel motion
                 print("P", end="")
+                self._stop_motion()
+                self.paused = True
             case EVENT_TYPE.RESUME:
                 # start wheel motion again
                 print("R", end="")
+                self._start_motion()
+                self.paused = False
+            case EVENT_TYPE.FINISH:
+                print("E {}s {}m".format(self.elapsed_t/1000, (self.elapsed_t*self.rvel)/(1000*1000)), end="")
+                self._stop_motion()
+                return UPDATE_RESULT.DONE
             case EVENT_TYPE.TIMER:
-                print(".", end="")
-                self.elapsed_t += evt.delta_t
-                if 0 < self.total_t < self.elapsed_t:
-                    return UPDATE_RESULT.DONE
+                if not self.paused:
+                    self.elapsed_t += evt.data
+                    if 0 < self.total_t <= self.elapsed_t:
+                        print("E {}s {}m".format(self.elapsed_t/1000, (self.elapsed_t*self.rvel)/(1000*1000)), end="")
+                        self._stop_motion()
+                        return UPDATE_RESULT.DONE
+                    print(".", end="")
             case _:
                 print("")
         return UPDATE_RESULT.OK
@@ -462,6 +558,15 @@ class EVENT_TYPE(enum.IntEnum):
     TIMER = 0x02
     PAUSE = 0x03
     RESUME = 0x04
+    BEGIN = 0x05
+    FINISH = 0x06
+
+
+class EventBeginAction:
+    type = EVENT_TYPE.BEGIN
+
+    def __init__(self):
+        pass
 
 
 class EventMessage:
@@ -474,8 +579,29 @@ class EventMessage:
 class EventTimer:
     type = EVENT_TYPE.TIMER
 
+    def __init__(self, delta_t):
+        self.data = delta_t
+
+
+class EventPause:
+    type = EVENT_TYPE.PAUSE
+
     def __init__(self):
-        self.data = ""
+        pass
+
+
+class EventResume:
+    type = EVENT_TYPE.RESUME
+
+    def __init__(self):
+        pass
+
+
+class EventFinish:
+    type = EVENT_TYPE.FINISH
+
+    def __init__(self):
+        pass
 
 
 class EventQueue:
@@ -502,19 +628,26 @@ class ActionSequence(threading.Thread):
     Upon startup, The ActionSequence runs the first configured action, then waits for events, using a select.select()
     call on all queues.
     """
-    def __init__(self):
+    def __init__(self, polling_rate):
         self.actions = []
         self.current_action = 0
         self.event_queues = []
         self.exception_queues = []
 
         self.heartbeat = EventQueue()
+        self.next_action = EventQueue()
         self.event_queues.append(self.heartbeat)
+        self.event_queues.append(self.next_action)
+
+        self.polling_rate = polling_rate
 
         super().__init__(daemon=True)
+        self.start()
 
     def append(self, action):
         self.actions.append(action)
+        if len(self.actions) == self.current_action + 1:
+            self.next_action.put(EventBeginAction())
 
     def register_event(self, evt):
         self.event_queues.append(evt)
@@ -523,24 +656,32 @@ class ActionSequence(threading.Thread):
         self.exception_queues.append(exevt)
 
     def run(self):
+        print("Starting ActionSequence")
+        hb_timer = cl.RepeatTimer(self.polling_rate/1000, self.heartbeat.put, EventTimer(self.polling_rate), autostart=True)
         while True:
+
             evt_list, _, ex_list = select.select(self.event_queues, [], self.exception_queues)
             for e in ex_list:
                 self.actions[self.current_action].cancel(e.get())
                 # we only need to respond to the first exception?
-                return
 
+                hb_timer.stop()
+                return
             # Flag for whether we want to start the next action after all the events are processed. This is set to
             # True if any action update returns Done.  We use a flag to ensure all current events are forwarded to
             # the current action no matter what order they appear.
             start_next_action = False
             for e in evt_list:
+                evt = e.get()
+                if evt.type == EVENT_TYPE.BEGIN:
+                    self.actions[self.current_action].begin()
+                    continue
+
                 if self.current_action > len(self.actions) - 1:
                     # no current action, so just consume incoming events
-                    e.get()
                     continue
                 # pass the event details to the current action for processing
-                result = self.actions[self.current_action].update(e.get())
+                result = self.actions[self.current_action].update(evt)
                 match result:
                     case UPDATE_RESULT.OK:
                         # Nothing to do here, the update was all good
@@ -549,6 +690,7 @@ class ActionSequence(threading.Thread):
                         # Action is done, get ready to move to the next one
                         start_next_action = True
                     case UPDATE_RESULT.TERMINATE:
+                        hb_timer.stop()
                         # We possibly want to post an exception here instead, for better cleanup
                         return
                     case _:
@@ -556,6 +698,8 @@ class ActionSequence(threading.Thread):
             # check our flag; if any of the events resulted in the action reaching completion, we want to go to the next
             if start_next_action:
                 self.current_action += 1
+                if len(self.actions) > self.current_action:
+                    self.next_action.put(EventBeginAction())
 
 
 class KeyAction:
