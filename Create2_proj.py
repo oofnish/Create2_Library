@@ -74,13 +74,6 @@ class TetheredDriveApp(Tk):
             "C": KeyAction("Connect", self.on_connect, None),
             "Escape": KeyAction("Quick Shutdown", None, None),
             "ESCAPE": KeyAction("", self.shutdown, None),
-
-            # TODO: remove these!
-            "G":      KeyAction("Begin Endless Forward Movement", self.move_endless, None),
-            "T":      KeyAction("Begin Target Movement (distance=1 meter", self.move_distance, None, press_arg=1000),
-            "W":      KeyAction("Pause Movement and Wait", self.move_pause, None),
-            "H":      KeyAction("Halt and Cancel Movement", self.move_halt, None),
-
         }
 
     def config_commands(self):
@@ -102,8 +95,10 @@ class TetheredDriveApp(Tk):
             "Y":      KeyAction("Query Group Packet ID #3", self.query_group_3, None),
             "X":      KeyAction("LED Toggle", self.light_toggler_toggle, None),
 
+            "M":      KeyAction("Toggle Sensor Mode light/bump (default light sensors)", self.toggle_sensor_types, None),
+            "N":      KeyAction("Toggle Cancel move or Pause move (cancel default)", self.toggle_pause_cancel, None),
             "G":      KeyAction("Begin Endless Forward Movement", self.move_endless, None),
-            "T":      KeyAction("Begin Target Movement (distance=1 meter", self.move_distance, None, press_arg=1000),
+            "T":      KeyAction("Begin Target Movement (distance=1 meter)", self.move_distance, None, press_arg=1000),
             "W":      KeyAction("Pause Movement and Wait", self.move_pause, None),
             "H":      KeyAction("Halt and Cancel Movement", self.move_halt, None),
 
@@ -119,9 +114,9 @@ class TetheredDriveApp(Tk):
             "SPACE":  KeyAction("", self.play_song, None, press_arg=(3, [64, 16])),
             "ESCAPE": KeyAction("", self.shutdown, None),
             "UP":     KeyAction("", self.add_motion, self.add_motion,
-                                press_arg=(VELOCITYCHANGE, 0), release_arg=(-VELOCITYCHANGE, 0)),
+                                press_arg=(VELOCITYCHANGE, 0), release_arg=(0, 0)),
             "DOWN":   KeyAction("", self.add_motion, self.add_motion,
-                                press_arg=(-VELOCITYCHANGE, 0), release_arg=(VELOCITYCHANGE, 0)),
+                                press_arg=(-VELOCITYCHANGE, 0), release_arg=(0, 0)),
             "LEFT":   KeyAction("", self.add_motion, self.add_motion,
                                 press_arg=(0, ROTATIONCHANGE), release_arg=(0, -ROTATIONCHANGE)),
             "RIGHT":  KeyAction("", self.add_motion, self.add_motion,
@@ -176,6 +171,9 @@ class TetheredDriveApp(Tk):
         self.manually_paused = False
 
         self.sensor_poller = None
+        # default light sensor mode
+        self.bump_sensor_mode = False
+        self.collision_event = EventFinish()
 
     def __del__(self):
         # re-enable the xwindows key repeat.  If this doesn't run, key repeat will be stuck off, and the resulting
@@ -245,7 +243,6 @@ class TetheredDriveApp(Tk):
                 self.text.delete("1.0", END)
                 self.config_commands()
                 self.text.insert(END, self.help_text({k: a.help for (k, a) in self.key_actions.items() if a.help != ""}))
-                self.sensor_poller = cl.RepeatTimer(0.025, self.safe_drive_monitor, autostart=True)
             except Exception as e:
                 print(f"Failed. Exception - {e}")
                 self.auto_connect = False
@@ -310,15 +307,30 @@ class TetheredDriveApp(Tk):
         def require_robot(self, *args, **kwargs):
             if self.robot is None:
                 pass
-                #tkinter.messagebox.showinfo('Error', "Robot Not Connected!")
-                #return
+                tkinter.messagebox.showinfo('Error', "Robot Not Connected!")
+                return
             foo(self, *args, **kwargs)
         return require_robot
+
+    def need_sensors(foo):
+        """
+         rr is a decorator that imposes a requirement for a connection to a robot before launching a command
+        """
+        def need_sensors_inner(self, *args, **kwargs):
+            if self.robot is not None:
+                if self.sensor_poller is None:
+                    self.sensor_poller = cl.RepeatTimer(.5, self.safe_drive_monitor, autostart=True)
+            foo(self, *args, **kwargs)
+        return need_sensors_inner
 
     def shutdown(self):
         """
         if the robot is configured (connected), this cleanly destroys the controller object before shutting down the ui
         """
+        if self.sensor_poller:
+            self.sensor_poller.stop()
+            del self.sensor_poller
+            self.sensor_poller = None
         if self.robot:
             del self.robot
             self.robot = None
@@ -342,7 +354,7 @@ class TetheredDriveApp(Tk):
         command_func()
 
     @rr
-    def play_song(self, song_id, song_notes):
+    def play_song(self, song_data):
         """
         Play a song on the robot.   If song_notes is None, then it just tries to play the song number.  Otherwise, it
         sets up a song using the given number and assigns it the note values in song_notes
@@ -350,9 +362,9 @@ class TetheredDriveApp(Tk):
         :param song_notes: a list of song notes.  If None, only an existing song will attempt to play, otherwise it will
         configure the song before playing
         """
-        if song_notes:
-            self.robot.createSong(song_id, song_notes)
-        self.robot.playSong(song_id)
+        if song_data[1]:
+            self.robot.createSong(song_data[0], song_data[1])
+        self.robot.playSong(song_data[0])
 
     @rr
     def add_motion(self, vel_rot):
@@ -361,7 +373,7 @@ class TetheredDriveApp(Tk):
         tuple and forwards to send_motion
         :param vel_rot: tuple containing linear and angular acceleration (vel,rot)
         """
-        self.robot.drive_direct(vel_rot[0], vel_rot[1])
+        self.robot.drive_direct(vel_rot[0], vel_rot[0])
 
     @rr
     def query_wall_cliff_signals(self):
@@ -413,15 +425,34 @@ class TetheredDriveApp(Tk):
             del self.light_timer
             self.light_timer = None
 
+    def toggle_pause_cancel(self):
+        if isinstance(self.collision_event, EventFinish):
+            print("Enabling movement pause upon collision")
+            self.collision_event = EventPause()
+        else:
+            print("Enabling movement termination upon collision")
+            self.collision_event = EventFinish()
+
+    def toggle_sensor_types(self):
+        if self.bump_sensor_mode:
+            print("Enabling light sensor collision mode")
+            self.bump_sensor_mode = False
+        else:
+            print("Enabling bump sensor collision mode")
+            self.bump_sensor_mode = True
+
+
     @rr
+    @need_sensors
     def move_endless(self):
         """
         Begin endless forward motion, that can be paused with bump/light sensors
         """
-        self.actions.append(MoveTimeAction(200, 200, 0))
+        self.actions.append(MoveTimeAction(self.robot, 200, 200, 0))
 
 
     @rr
+    @need_sensors
     def move_distance(self, dist_in_mm):
         """
         Begin forward motion with a provided distance target.  The robot will move to the target, pausing if an obstacle
@@ -429,7 +460,7 @@ class TetheredDriveApp(Tk):
         :param dist_in_mm: distance to move in millimeters
         """
         t = (dist_in_mm * 1000) / 200
-        self.actions.append(MoveTimeAction(200, 200, t))
+        self.actions.append(MoveTimeAction(self.robot, 200, 200, t))
 
 
     @rr
@@ -458,14 +489,31 @@ class TetheredDriveApp(Tk):
     def safe_drive_monitor(self):
         sensors = self.robot.get_sensors()
         pause = False
-        # Need Better Sensor handling here
-        if sensors.light_bumper != 0 or sensors.bumps_wheeldrops != 0:
-            pause = True
+
+        if self.bump_sensor_mode:
+            if sensors.bumps_wheeldrops.bump_left or sensors.bumps_wheeldrops.bump_right:
+                pause = True
+        else:
+            if sensors.light_bumper.left \
+                    or sensors.light_bumper.right \
+                    or sensors.light_bumper.front_left \
+                    or sensors.light_bumper.front_right \
+                    or sensors.light_bumper.center_left \
+                    or sensors.light_bumper.center_right:
+                #print("LIGHT sensors triggered: {}, {}, {}, {}, {}, {}".format(
+                #      sensors.light_bumper_left,
+                #      sensors.light_bumper_right,
+                #      sensors.light_bumper_front_left,
+                #      sensors.light_bumper_front_right,
+                #      sensors.light_bumper_center_left,
+                #      sensors.light_bumper_center_right))
+                pause = True
 
         if pause:
-            self.bot_events.put(EventPause())
+            self.bot_events.put(self.collision_event)
         else:
-            self.bot_events.put(EventResume())
+            if isinstance(self.collision_event, EventPause):
+                self.bot_events.put(EventResume())
 
 
 class World:
@@ -491,19 +539,21 @@ class World:
 
 
 class MoveTimeAction:
-    def __init__(self, rvel, lvel, t):
+    def __init__(self, robotref, rvel, lvel, t):
         self.rvel = rvel
         self.lvel = lvel
         self.total_t = t
         self.elapsed_t = 0
         self.paused = False
+        self.robot = robotref
 
     def _start_motion(self):
         # send command to start robot with configured velocities
-        pass
+        self.robot.drive_direct(self.rvel, self.lvel)
 
     def _stop_motion(self):
         # send command to stop robot
+        self.robot.drive_stop()
         pass
 
     def begin(self):
@@ -520,8 +570,9 @@ class MoveTimeAction:
                 self.paused = True
             case EVENT_TYPE.RESUME:
                 # start wheel motion again
-                print("R", end="")
-                self._start_motion()
+                if self.paused:
+                    print("R", end="")
+                    self._start_motion()
                 self.paused = False
             case EVENT_TYPE.FINISH:
                 print("E {}s {}m".format(self.elapsed_t/1000, (self.elapsed_t*self.rvel)/(1000*1000)), end="")
