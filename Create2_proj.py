@@ -518,18 +518,47 @@ class TetheredDriveApp(Tk):
     @rr
     @need_sensors
     def right_hand_wall(self):
-        # pid = PIDController(capacity=10, set_point=400, time=0.5, gain_p=2, gain_i=2, gain_d=2)
+        # light bumper pids
+        # pid_lb_left = PIDController(capacity=10, set_point=400, time=0.5, gain_p=2, gain_i=2, gain_d=2)
+        pid_lb_front_left = PIDController(capacity=10, set_point=400, time=0.5, gain_p=2, gain_i=2, gain_d=2)
+        pid_lb_center_left = PIDController(capacity=10, set_point=400, time=0.5, gain_p=2, gain_i=2, gain_d=2)
+        pid_lb_center_right = PIDController(capacity=10, set_point=400, time=0.5, gain_p=2, gain_i=2, gain_d=2)
+        pid_lb_front_right = PIDController(capacity=10, set_point=400, time=0.5, gain_p=2, gain_i=2, gain_d=2)
+        pid_lb_right = PIDController(capacity=10, set_point=400, time=0.5, gain_p=2, gain_i=2, gain_d=2)
 
         # start moving until robot hits a wall - every time wall is hit, turn left 90 degrees and start moving
+        # if error history is negative, turn left - if positive, turn right
         sensors = self.robot.get_sensors()
         pause = False
 
-        if sensors.light_bumper.left \
-                or sensors.light_bumper.right \
-                or sensors.light_bumper.front_left \
-                or sensors.light_bumper.front_right \
-                or sensors.light_bumper.center_left \
-                or sensors.light_bumper.center_right:
+        index = pid_lb_front_left.add_sample(sensors.light_bumper_front_left)
+        pid_lb_center_left.add_sample(sensors.light_bumper_center_left)
+        pid_lb_center_right.add_sample(sensors.light_bumper_center_right)
+        pid_lb_front_right.add_sample(sensors.light_bumper_front_right)
+        pid_lb_right.add_sample(sensors.light_bumper_right)
+
+        # adjust wheel velocity based on errors 
+        if pid_lb_front_left.calculate_output(index) < 0 \
+            or pid_lb_center_left.calculate_output(index) < 0 \
+            or pid_lb_center_right.calculate_output(index) < 0 \
+            or pid_lb_front_right.calculate_output(index) < 0:
+            pause = True 
+        if pause:
+            self.bot_events.put(self.collision_event)
+            # left_turn here
+        else:
+            if isinstance(self.collision_event, EventPause):
+                self.bot_events.put(EventResume())
+
+        
+
+
+        # if sensors.light_bumper.left \
+        #         or sensors.light_bumper.right \
+        #         or sensors.light_bumper.front_left \
+        #         or sensors.light_bumper.front_right \
+        #         or sensors.light_bumper.center_left \
+        #         or sensors.light_bumper.center_right:
             #print("LIGHT sensors triggered: {}, {}, {}, {}, {}, {}".format(
             #      sensors.light_bumper_left,
             #      sensors.light_bumper_right,
@@ -537,13 +566,9 @@ class TetheredDriveApp(Tk):
             #      sensors.light_bumper_front_right,
             #      sensors.light_bumper_center_left,
             #      sensors.light_bumper_center_right))
-            pause = True
+            
 
-        if pause:
-            self.bot_events.put(self.collision_event)
-        else:
-            if isinstance(self.collision_event, EventPause):
-                self.bot_events.put(EventResume())
+        
         
 
         # make a left turn and start following the wall. 
@@ -623,7 +648,7 @@ class PIDController:
                 # print(self.gain_d*((self.readings[sample_index] - self.readings[sample_index - 1])/self.time))
                 return self.gain_d*((self.readings[sample_index] - self.readings[sample_index - 1])/self.time)
             else:
-                return self.gain_d*((self.readings[sample_index] - self.readings[sample_index])/self.time)
+                return self.gain_d*((self.readings[0] - self.readings[9])/self.time)
 
         # discrete pid calculation
         return calc_p() + calc_i() + calc_d()
