@@ -526,7 +526,6 @@ class TetheredDriveApp(Tk):
     @need_sensors
     def right_hand_wall(self):
 
-
         # start moving until robot hits a wall - every time wall is hit, turn left 90 degrees and start moving
         # if error history is negative, turn left - if positive, turn right
         sensors = self.robot.get_sensors()
@@ -647,9 +646,9 @@ class PIDController:
         def calc_d():
             if sample_index > 0:
                 # print(self.gain_d*((self.readings[sample_index] - self.readings[sample_index - 1])/self.time))
-                return self.gain_d*((self.readings[sample_index] - self.readings[sample_index - 1])/self.time)
+                return self.gain_d*((self.readings_errors[sample_index] - self.readings_errors[sample_index - 1])/self.time)
             else:
-                return self.gain_d*((self.readings[0] - self.readings[9])/self.time)
+                return self.gain_d*((self.readings_errors[0] - self.readings_errors[len(self.readings_errors)])/self.time)
 
         # discrete pid calculation
         return calc_p() + calc_i() + calc_d()
