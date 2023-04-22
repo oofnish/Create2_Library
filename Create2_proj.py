@@ -648,7 +648,7 @@ class PIDController:
                 # print(self.gain_d*((self.readings[sample_index] - self.readings[sample_index - 1])/self.time))
                 return self.gain_d*((self.readings_errors[sample_index] - self.readings_errors[sample_index - 1])/self.time)
             else:
-                return self.gain_d*((self.readings_errors[0] - self.readings_errors[len(self.readings_errors)])/self.time)
+                return self.gain_d*((self.readings_errors[0] - self.readings_errors[len(self.readings_errors) - 1])/self.time)
 
         # discrete pid calculation
         return calc_p() + calc_i() + calc_d()
