@@ -174,6 +174,13 @@ class TetheredDriveApp(Tk):
         # default light sensor mode
         self.bump_sensor_mode = False
         self.collision_event = EventFinish()
+        # light bumper pids
+        self.pid_lb_left = PIDController(capacity=10, set_point=400, time=0.5, gain_p=2, gain_i=2, gain_d=2)
+        self.pid_lb_front_left = PIDController(capacity=10, set_point=400, time=0.5, gain_p=2, gain_i=2, gain_d=2)
+        self.pid_lb_center_left = PIDController(capacity=10, set_point=400, time=0.5, gain_p=2, gain_i=2, gain_d=2)
+        self.pid_lb_center_right = PIDController(capacity=10, set_point=400, time=0.5, gain_p=2, gain_i=2, gain_d=2)
+        self.pid_lb_front_right = PIDController(capacity=10, set_point=400, time=0.5, gain_p=2, gain_i=2, gain_d=2)
+        self.pid_lb_right = PIDController(capacity=10, set_point=400, time=0.5, gain_p=2, gain_i=2, gain_d=2)
 
     def __del__(self):
         # re-enable the xwindows key repeat.  If this doesn't run, key repeat will be stuck off, and the resulting
@@ -518,30 +525,24 @@ class TetheredDriveApp(Tk):
     @rr
     @need_sensors
     def right_hand_wall(self):
-        # light bumper pids
-        # pid_lb_left = PIDController(capacity=10, set_point=400, time=0.5, gain_p=2, gain_i=2, gain_d=2)
-        pid_lb_front_left = PIDController(capacity=10, set_point=400, time=0.5, gain_p=2, gain_i=2, gain_d=2)
-        pid_lb_center_left = PIDController(capacity=10, set_point=400, time=0.5, gain_p=2, gain_i=2, gain_d=2)
-        pid_lb_center_right = PIDController(capacity=10, set_point=400, time=0.5, gain_p=2, gain_i=2, gain_d=2)
-        pid_lb_front_right = PIDController(capacity=10, set_point=400, time=0.5, gain_p=2, gain_i=2, gain_d=2)
-        pid_lb_right = PIDController(capacity=10, set_point=400, time=0.5, gain_p=2, gain_i=2, gain_d=2)
+
 
         # start moving until robot hits a wall - every time wall is hit, turn left 90 degrees and start moving
         # if error history is negative, turn left - if positive, turn right
         sensors = self.robot.get_sensors()
         pause = False
 
-        index = pid_lb_front_left.add_sample(sensors.light_bumper_front_left)
-        pid_lb_center_left.add_sample(sensors.light_bumper_center_left)
-        pid_lb_center_right.add_sample(sensors.light_bumper_center_right)
-        pid_lb_front_right.add_sample(sensors.light_bumper_front_right)
-        pid_lb_right.add_sample(sensors.light_bumper_right)
+        index = self.pid_lb_front_left.add_sample(sensors.light_bumper_front_left)
+        self.pid_lb_center_left.add_sample(sensors.light_bumper_center_left)
+        self.pid_lb_center_right.add_sample(sensors.light_bumper_center_right)
+        self.pid_lb_front_right.add_sample(sensors.light_bumper_front_right)
+        self.pid_lb_right.add_sample(sensors.light_bumper_right)
 
         # adjust wheel velocity based on errors 
-        if pid_lb_front_left.calculate_output(index) < 0 \
-            or pid_lb_center_left.calculate_output(index) < 0 \
-            or pid_lb_center_right.calculate_output(index) < 0 \
-            or pid_lb_front_right.calculate_output(index) < 0:
+        if self.pid_lb_front_left.calculate_output(index) < 0 \
+            or self.pid_lb_center_left.calculate_output(index) < 0 \
+            or self.pid_lb_center_right.calculate_output(index) < 0 \
+            or self.pid_lb_front_right.calculate_output(index) < 0:
             pause = True 
         if pause:
             self.bot_events.put(self.collision_event)
