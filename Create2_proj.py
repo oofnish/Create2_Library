@@ -62,7 +62,7 @@ TEXTWIDTH = 100 # window width, in characters
 TEXTHEIGHT = 24 # window height, in lines
 
 VELOCITYCHANGE = 200
-ROTATIONCHANGE = 300
+ROTATIONCHANGE = 50
 
 
 class TetheredDriveApp(Tk):
@@ -91,6 +91,8 @@ class TetheredDriveApp(Tk):
             "R":      KeyAction("Reset",    self.direct_command, None, press_arg=self.robot.reset),
             "B":      KeyAction("Print Sensors",    self.print_sensors, None),
 
+
+            "L":      KeyAction("Query Light Sensors", self.query_light_sensors, None),
             "Z":      KeyAction("Query Wall Signal/Cliff Signals", self.query_wall_cliff_signals, None),
             "Y":      KeyAction("Query Group Packet ID #3", self.query_group_3, None),
             "X":      KeyAction("LED Toggle", self.light_toggler_toggle, None),
@@ -117,10 +119,10 @@ class TetheredDriveApp(Tk):
                                 press_arg=(VELOCITYCHANGE, 0), release_arg=(0, 0)),
             "DOWN":   KeyAction("", self.add_motion, self.add_motion,
                                 press_arg=(-VELOCITYCHANGE, 0), release_arg=(0, 0)),
-            "LEFT":   KeyAction("", self.add_motion, self.add_motion,
-                                press_arg=(0, ROTATIONCHANGE), release_arg=(0, -ROTATIONCHANGE)),
-            "RIGHT":  KeyAction("", self.add_motion, self.add_motion,
-                                press_arg=(0, -ROTATIONCHANGE), release_arg=(0, ROTATIONCHANGE)),
+            "LEFT":   KeyAction("", self.add_rotation, self.add_motion,
+                                press_arg=(0, ROTATIONCHANGE), release_arg=(0, 0)),
+            "RIGHT":  KeyAction("", self.add_rotation, self.add_motion,
+                                press_arg=(0, -ROTATIONCHANGE), release_arg=(0, 0)),
         }
 
     # Initialize a "Robot" object
@@ -367,6 +369,16 @@ class TetheredDriveApp(Tk):
         self.robot.playSong(song_data[0])
 
     @rr
+    def add_rotation(self, vel_rot):
+        """
+        key event that adds motion in a tuple to the velocity/rotation of the bot.  Primarily, this unwraps the argument
+        tuple and forwards to send_motion
+        :param vel_rot: tuple containing linear and angular acceleration (vel,rot)
+        """
+
+        self.robot.drive_direct(vel_rot[1], -vel_rot[1])
+
+    @rr
     def add_motion(self, vel_rot):
         """
         key event that adds motion in a tuple to the velocity/rotation of the bot.  Primarily, this unwraps the argument
@@ -374,6 +386,25 @@ class TetheredDriveApp(Tk):
         :param vel_rot: tuple containing linear and angular acceleration (vel,rot)
         """
         self.robot.drive_direct(vel_rot[0], vel_rot[0])
+
+    @rr
+    def query_light_sensors(self):
+        sensors = self.robot.get_sensors()
+        print([
+            sensors.light_bumper_right,
+            sensors.light_bumper_front_right,
+            sensors.light_bumper_center_right,
+            sensors.light_bumper_center_left,
+            sensors.light_bumper_front_left,
+            sensors.light_bumper_left], [
+            sensors.light_bumper.right,
+            sensors.light_bumper.front_right,
+            sensors.light_bumper.center_right,
+            sensors.light_bumper.center_left,
+            sensors.light_bumper.front_left,
+            sensors.light_bumper.left]
+        )
+
 
     @rr
     def query_wall_cliff_signals(self):
@@ -536,6 +567,70 @@ class World:
         # statistics
         # total distance traveled
         self.total_dist = 0
+
+# d = distance from right wall
+# r = reference distance
+# e = d - r
+# theta_dot =
+
+class ErrHistory(object):
+    def __init__(self, size):
+        self.cursor = 0
+        self.size = size
+        self._data = []
+
+    def add(self, err_val):
+        if len(self._data) == self.size:
+            self._data[self.cursor] = err_val
+        else:
+            self._data.append(err_val)
+        self.cursor = (self.cursor + 1) % self.size
+
+    def __len__(self):
+        return len(self._data)
+
+    def __iter__(self):
+        self._i = 0
+        return self
+
+    def __next__(self):
+        if self._i < len(self._data):
+            item = self[self._i]
+            self._i += 1
+            return item
+        else:
+            raise StopIteration
+
+    def __getitem__(self, idx):
+        if len(self._data) == 0:
+            return 0
+        if len(self._data) == self.size:
+            return self._data[(idx + self.cursor) % self.size]
+        else:
+            if idx <= 0:
+                return self._data[idx]
+            else:
+                return self._data[idx % len(self._data)]
+
+
+class PID_Control:
+    def __init__(self, kp, ki, kd):
+        self.kp = kp
+        self.ki = ki
+        self.kd = kd
+        self.past = ErrHistory(10)
+
+    def PID(self, error):
+        p = self.kp * error
+        if len(self.past) > 0:
+            i = self.ki * (sum(self.past)/len(self.past))
+        else:
+            i = 0
+        d = self.kd * (error - self.past[-1])
+
+        self.past.add(error)
+
+        return p + i + d
 
 
 class MoveTimeAction:
