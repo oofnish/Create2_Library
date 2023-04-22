@@ -518,10 +518,32 @@ class TetheredDriveApp(Tk):
     @rr
     @need_sensors
     def right_hand_wall(self):
-        pid = PIDController(capacity=10, set_point=400, time=0.5, gain_p=2, gain_i=2, gain_d=2)
+        # pid = PIDController(capacity=10, set_point=400, time=0.5, gain_p=2, gain_i=2, gain_d=2)
 
         # start moving until robot hits a wall - every time wall is hit, turn left 90 degrees and start moving
-  
+        sensors = self.robot.get_sensors()
+        pause = False
+
+        if sensors.light_bumper.left \
+                or sensors.light_bumper.right \
+                or sensors.light_bumper.front_left \
+                or sensors.light_bumper.front_right \
+                or sensors.light_bumper.center_left \
+                or sensors.light_bumper.center_right:
+            #print("LIGHT sensors triggered: {}, {}, {}, {}, {}, {}".format(
+            #      sensors.light_bumper_left,
+            #      sensors.light_bumper_right,
+            #      sensors.light_bumper_front_left,
+            #      sensors.light_bumper_front_right,
+            #      sensors.light_bumper_center_left,
+            #      sensors.light_bumper_center_right))
+            pause = True
+
+        if pause:
+            self.bot_events.put(self.collision_event)
+        else:
+            if isinstance(self.collision_event, EventPause):
+                self.bot_events.put(EventResume())
         
 
         # make a left turn and start following the wall. 
@@ -568,51 +590,37 @@ class PIDController:
         self.gain_p = gain_p
         self.gain_i = gain_i
         self.gain_d = gain_d
-        self.readings = [None]*capacity
-        self.readings_errors = [None]*capacity
+        self.readings = [0]*capacity
+        self.readings_errors = [0]*capacity
         self.current_index = 0
 
     def add_sample(self, state_sample):
         def calc_error(state_sample):
             return state_sample - self.set_point
-                # check index position is less than last index
-
-        if self.readings[self.current_index] == None:
-            self.readings[self.current_index] = state_sample
-            self.readings_errors[self.current_index] = calc_error(state_sample)
-        elif self.current_index < len(self.readings)-1:
-            self.current_index += 1
-        else:
-            self.current_index = 0
         # add error calc to array for pid
         self.readings[self.current_index] = state_sample
         self.readings_errors[self.current_index] = calc_error(state_sample)
-
-
+        # increment current index
+        if self.current_index < len(self.readings)-1:
+            self.current_index += 1
+        else:
+            self.current_index = 0
+        
         return self.current_index
 
 
     def calculate_output(self, sample_index: int):
-        """take a state sample and calculate PID output"""
-        
-        def sum_error(smpl_index):
-        # get sum of each error index up to the current index
-            sum_error = 0
-            i = 0
-            while i <= smpl_index:
-                sum_error += self.readings_errors[i]
-                i += 1
-            return sum_error
+        # take a state sample and calculate PID output
 
         def calc_p():
-            print((self.gain_p*self.readings_errors[sample_index]))
+            # print((self.gain_p*self.readings_errors[sample_index]))
             return (self.gain_p*self.readings_errors[sample_index])
         def calc_i():
-            print(self.gain_i*(self.time*sum_error(sample_index)))
-            return self.gain_i*(self.time*sum_error(sample_index))
+            # print(self.gain_i*(self.time*sum(self.readings_errors)))
+            return self.gain_i*(self.time*sum(self.readings_errors))
         def calc_d():
             if sample_index > 0:
-                print(self.gain_d*((self.readings[sample_index] - self.readings[sample_index - 1])/self.time))
+                # print(self.gain_d*((self.readings[sample_index] - self.readings[sample_index - 1])/self.time))
                 return self.gain_d*((self.readings[sample_index] - self.readings[sample_index - 1])/self.time)
             else:
                 return self.gain_d*((self.readings[sample_index] - self.readings[sample_index])/self.time)
