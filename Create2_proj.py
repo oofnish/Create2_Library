@@ -103,6 +103,7 @@ class TetheredDriveApp(Tk):
             "T":      KeyAction("Begin Target Movement (distance=1 meter)", self.move_distance, None, press_arg=1000),
             "W":      KeyAction("Pause Movement and Wait", self.move_pause, None),
             "H":      KeyAction("Halt and Cancel Movement", self.move_halt, None),
+            "PERIOD":      KeyAction("Wall Follow", self.wall_follow, None),
 
             # The following actions are virtual, 'pretty output' items that do not correspond directly to actions, but
             # stand in for action groups or provide prettier name aliases
@@ -167,7 +168,7 @@ class TetheredDriveApp(Tk):
         self.light_timer = None
         self.light_state_a = False
 
-        self.actions = ActionSequence(500)
+        self.actions = ActionSequence(100)
         self.bot_events = EventQueue()
         self.actions.register_event(self.bot_events)
         self.manually_paused = False
@@ -241,7 +242,7 @@ class TetheredDriveApp(Tk):
             try:
                 self.robot = cl.Create2(port=port, baud=115200)
                 print("Connected!")
-                tkinter.messagebox.showinfo('Connected', "Connection succeeded!")
+                # tkinter.messagebox.showinfo('Connected', "Connection succeeded!")
                 self.text.delete("1.0", END)
                 self.config_commands()
                 self.text.insert(END, self.help_text({k: a.help for (k, a) in self.key_actions.items() if a.help != ""}))
@@ -493,6 +494,17 @@ class TetheredDriveApp(Tk):
         t = (dist_in_mm * 1000) / 200
         self.actions.append(MoveTimeAction(self.robot, 200, 200, t))
 
+    @rr
+    @need_sensors
+    def wall_follow(self):
+        """
+        Begin wall follow behavior -- first move forward until a wall is encountered, then perform wall following
+        behavior
+        :param dist_in_mm:
+        :return:
+        """
+        print("Beginning Wall Follow. H to stop")
+        self.actions.append(WallFollowAction(self.robot, 300))
 
     @rr
     def move_halt(self):
@@ -525,11 +537,9 @@ class TetheredDriveApp(Tk):
             if sensors.bumps_wheeldrops.bump_left or sensors.bumps_wheeldrops.bump_right:
                 pause = True
         else:
-            if sensors.light_bumper.left \
-                    or sensors.light_bumper.right \
-                    or sensors.light_bumper.front_left \
-                    or sensors.light_bumper.front_right \
-                    or sensors.light_bumper.center_left \
+            if sensors.bumps_wheeldrops.bump_left or sensors.bumps_wheeldrops.bump_right:
+                pause = True
+            if sensors.light_bumper.center_left \
                     or sensors.light_bumper.center_right:
                 #print("LIGHT sensors triggered: {}, {}, {}, {}, {}, {}".format(
                 #      sensors.light_bumper_left,
@@ -618,7 +628,7 @@ class PID_Control:
         self.kp = kp
         self.ki = ki
         self.kd = kd
-        self.past = ErrHistory(10)
+        self.past = ErrHistory(5)
 
     def PID(self, error):
         p = self.kp * error
@@ -626,11 +636,90 @@ class PID_Control:
             i = self.ki * (sum(self.past)/len(self.past))
         else:
             i = 0
-        d = self.kd * (error - self.past[-1])
-
+        if len(self.past) > 1:
+            d = self.kd * (error - self.past[-1])
+        else:
+            d = 0
         self.past.add(error)
 
         return p + i + d
+
+
+class WallFollowAction:
+    def __init__(self, robotref, baseVel):
+        self.basevel = baseVel
+        self.rvel = baseVel
+        self.lvel = baseVel
+        self.elapsed_t = 0
+        self.paused = False
+        self.robot = robotref
+        self.controller = PID_Control(6, .1, 30)
+        print("New PID Created")
+
+    def begin(self):
+        self._start_motion()
+
+    def _start_motion(self):
+        # send command to start robot with configured velocities
+        self.robot.drive_direct(self.rvel, self.lvel)
+
+    def _stop_motion(self):
+        # send command to stop robot
+        self.robot.drive_stop()
+        pass
+
+    def update(self, evt):
+        match evt.type:
+            case EVENT_TYPE.PAUSE:
+                print("Motion stopping")
+                # halt wheel motion
+                self._stop_motion()
+                self.paused = True
+                return UPDATE_RESULT.DONE
+            case EVENT_TYPE.RESUME:
+                # start wheel motion again
+                if self.paused:
+                    self._start_motion()
+                self.paused = False
+            case EVENT_TYPE.FINISH:
+                print("Motion stopping")
+                self._stop_motion()
+                return UPDATE_RESULT.DONE
+            case EVENT_TYPE.TIMER:
+                if not self.paused:
+                    sensors = self.robot.get_sensors()
+                    u = self.controller.PID(200 - sensors.light_bumper_right)
+
+                    #print("R:{}, PID:{}".format(sensors.light_bumper_right, u))
+                    if sensors.light_bumper_right == 0:
+                        print("Lost Wall!")
+                        self.rvel = self.basevel + 150 #dev
+                        self.lvel = self.basevel - 150 #dev
+                        self._start_motion()
+                        #self._stop_motion()
+                        #return UPDATE_RESULT.DONE
+
+                    elif u > 0:
+                        dev = int(u)
+                        print("r {}".format(dev))
+                        if dev > 50:
+                            dev = 50
+                        self.rvel = self.basevel + dev
+                        self.lvel = self.basevel - dev
+                        self._start_motion()
+                    elif u < 0:
+                        dev = int(u)
+                        print("l {}".format(dev))
+                        if dev < -50:
+                            dev = -50
+                        self.rvel = self.basevel + dev
+                        self.lvel = self.basevel - dev
+                        self._start_motion()
+
+                    #print("continuing")
+            case _:
+                print("")
+        return UPDATE_RESULT.OK
 
 
 class MoveTimeAction:
