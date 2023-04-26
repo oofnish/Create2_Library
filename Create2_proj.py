@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import enum
+import math
 import multiprocessing
+import time
+
 import select
 import threading
 # Version History
@@ -46,7 +49,7 @@ from tkinter import *
 import tkinter.messagebox
 import tkinter.simpledialog
 
-import os, sys, glob # for listing serial ports
+import os, sys, glob  # for listing serial ports
 
 # Create Library
 import createlib as cl
@@ -57,9 +60,8 @@ except ImportError:
     tkinter.messagebox.showerror('Import error', 'Please install pyserial.')
     raise
 
-
-TEXTWIDTH = 100 # window width, in characters
-TEXTHEIGHT = 24 # window height, in lines
+TEXTWIDTH = 100  # window width, in characters
+TEXTHEIGHT = 24  # window height, in lines
 
 VELOCITYCHANGE = 200
 ROTATIONCHANGE = 50
@@ -83,47 +85,46 @@ class TetheredDriveApp(Tk):
         self.key_actions = {
             # Key action definition format:
             # KEY : Help text | KeyPress Callback | KeyRelease Callback | callback arguments (kwargs)
-            "P":      KeyAction("Passive",  self.direct_command, None, press_arg=self.robot.start),
-            "S":      KeyAction("Safe",     self.direct_command, None, press_arg=self.robot.safe),
-            "F":      KeyAction("Full",     self.direct_command, None, press_arg=self.robot.full),
-            "C":      KeyAction("Clean",    self.direct_command, None, press_arg=self.robot.clean),
-            "D":      KeyAction("Dock",     self.direct_command, None, press_arg=self.robot.dock),
-            "R":      KeyAction("Reset",    self.direct_command, None, press_arg=self.robot.reset),
-            "B":      KeyAction("Print Sensors",    self.print_sensors, None),
+            "P": KeyAction("Passive", self.direct_command, None, press_arg=self.robot.start),
+            "S": KeyAction("Safe", self.direct_command, None, press_arg=self.robot.safe),
+            "F": KeyAction("Full", self.direct_command, None, press_arg=self.robot.full),
+            "C": KeyAction("Clean", self.direct_command, None, press_arg=self.robot.clean),
+            "D": KeyAction("Dock", self.direct_command, None, press_arg=self.robot.dock),
+            "R": KeyAction("Reset", self.direct_command, None, press_arg=self.robot.reset),
+            "B": KeyAction("Print Sensors", self.print_sensors, None),
 
+            "L": KeyAction("Query Light Sensors", self.query_light_sensors, None),
+            "Z": KeyAction("Query Wall Signal/Cliff Signals", self.query_wall_cliff_signals, None),
+            "Y": KeyAction("Query Group Packet ID #3", self.query_group_3, None),
+            "X": KeyAction("LED Toggle", self.light_toggler_toggle, None),
 
-            "L":      KeyAction("Query Light Sensors", self.query_light_sensors, None),
-            "Z":      KeyAction("Query Wall Signal/Cliff Signals", self.query_wall_cliff_signals, None),
-            "Y":      KeyAction("Query Group Packet ID #3", self.query_group_3, None),
-            "X":      KeyAction("LED Toggle", self.light_toggler_toggle, None),
-
-            "M":      KeyAction("Toggle Sensor Mode light/bump (default light sensors)", self.toggle_sensor_types, None),
-            "N":      KeyAction("Toggle Cancel move or Pause move (cancel default)", self.toggle_pause_cancel, None),
-            "G":      KeyAction("Begin Endless Forward Movement", self.move_endless, None),
-            "T":      KeyAction("Begin Target Movement (distance=1 meter)", self.move_distance, None, press_arg=1000),
-            "W":      KeyAction("Pause Movement and Wait", self.move_pause, None),
-            "H":      KeyAction("Halt and Cancel Movement", self.move_halt, None),
-            "PERIOD":      KeyAction("Wall Follow", self.wall_follow, None),
+            "M": KeyAction("Toggle Sensor Mode light/bump (default light sensors)", self.toggle_sensor_types, None),
+            "N": KeyAction("Toggle Cancel move or Pause move (cancel default)", self.toggle_pause_cancel, None),
+            "G": KeyAction("Begin Endless Forward Movement", self.move_endless, None),
+            "T": KeyAction("Begin Target Movement (distance=1 meter)", self.move_distance, None, press_arg=1000),
+            "W": KeyAction("Pause Movement and Wait", self.move_pause, None),
+            "H": KeyAction("Halt and Cancel Movement", self.move_halt, None),
+            "PERIOD": KeyAction("Wall Follow", self.wall_follow, None),
 
             # The following actions are virtual, 'pretty output' items that do not correspond directly to actions, but
             # stand in for action groups or provide prettier name aliases
-            "Space":  KeyAction("Beep", None, None),
+            "Space": KeyAction("Beep", None, None),
             "Escape": KeyAction("Quick Shutdown", None, None),
             "Arrows": KeyAction("Motion", None, None),
 
             # The following actions have emtpy help text, therefore do not show in help. They perform the actions for
             # the 'pretty output' items above
             # "SPACE":  KeyAction("", self.send_command_ascii, None, press_arg='140 3 1 64 16 141 3'),
-            "SPACE":  KeyAction("", self.play_song, None, press_arg=(3, [64, 16])),
+            "SPACE": KeyAction("", self.play_song, None, press_arg=(3, [64, 16])),
             "ESCAPE": KeyAction("", self.shutdown, None),
-            "UP":     KeyAction("", self.add_motion, self.add_motion,
-                                press_arg=(VELOCITYCHANGE, 0), release_arg=(0, 0)),
-            "DOWN":   KeyAction("", self.add_motion, self.add_motion,
-                                press_arg=(-VELOCITYCHANGE, 0), release_arg=(0, 0)),
-            "LEFT":   KeyAction("", self.add_rotation, self.add_motion,
-                                press_arg=(0, ROTATIONCHANGE), release_arg=(0, 0)),
-            "RIGHT":  KeyAction("", self.add_rotation, self.add_motion,
-                                press_arg=(0, -ROTATIONCHANGE), release_arg=(0, 0)),
+            "UP": KeyAction("", self.add_motion, self.add_motion,
+                            press_arg=(VELOCITYCHANGE, 0), release_arg=(0, 0)),
+            "DOWN": KeyAction("", self.add_motion, self.add_motion,
+                              press_arg=(-VELOCITYCHANGE, 0), release_arg=(0, 0)),
+            "LEFT": KeyAction("", self.add_rotation, self.add_motion,
+                              press_arg=(0, ROTATIONCHANGE), release_arg=(0, 0)),
+            "RIGHT": KeyAction("", self.add_rotation, self.add_motion,
+                               press_arg=(0, -ROTATIONCHANGE), release_arg=(0, 0)),
         }
 
     # Initialize a "Robot" object
@@ -149,7 +150,7 @@ class TetheredDriveApp(Tk):
         create_menu.add_command(label="Help", command=self.on_help)
         create_menu.add_command(label="Quit", command=self.on_quit)
 
-        self.text = Text(self, height = TEXTHEIGHT, width = TEXTWIDTH, wrap = WORD)
+        self.text = Text(self, height=TEXTHEIGHT, width=TEXTWIDTH, wrap=WORD)
         self.scroll = Scrollbar(self, command=self.text.yview)
         self.text.configure(yscrollcommand=self.scroll.set)
         self.text.pack(side=LEFT, fill=BOTH, expand=True)
@@ -168,15 +169,21 @@ class TetheredDriveApp(Tk):
         self.light_timer = None
         self.light_state_a = False
 
+        # world state object, set upon connection to the robot
+        self.world = None
+
+        # bot behavior controller
         self.actions = ActionSequence(100)
         self.bot_events = EventQueue()
         self.actions.register_event(self.bot_events)
         self.manually_paused = False
 
         self.sensor_poller = None
+
         # default light sensor mode
         self.bump_sensor_mode = False
-        self.collision_event = EventFinish()
+        self.collision_event = EventCollide()
+        self.front_event = EventFront()
 
     def __del__(self):
         # re-enable the xwindows key repeat.  If this doesn't run, key repeat will be stuck off, and the resulting
@@ -187,9 +194,9 @@ class TetheredDriveApp(Tk):
 
     @staticmethod
     def pretty_print(sensors):
-        str = f"{'-'*70}\n"
+        str = f"{'-' * 70}\n"
         str += f"{'Sensor':>40} | {'Value':<5}\n"
-        str += f"{'-'*70}\n"
+        str += f"{'-' * 70}\n"
         for k, v in sensors._asdict().items():
             str += f"{k}: {v}\n"
         return str
@@ -233,7 +240,9 @@ class TetheredDriveApp(Tk):
             if len(ports) == 1 and self.auto_connect:
                 port = ports[0]
             else:
-                port = tkinter.simpledialog.askstring('Port?', 'Enter COM port to open.\nAvailable options:\n' + '\n'.join(ports))
+                port = tkinter.simpledialog.askstring('Port?',
+                                                      'Enter COM port to open.\nAvailable options:\n' + '\n'.join(
+                                                          ports))
         except EnvironmentError:
             port = tkinter.simpledialog.askstring('Port?', 'Enter COM port to open.')
 
@@ -245,17 +254,21 @@ class TetheredDriveApp(Tk):
                 # tkinter.messagebox.showinfo('Connected', "Connection succeeded!")
                 self.text.delete("1.0", END)
                 self.config_commands()
-                self.text.insert(END, self.help_text({k: a.help for (k, a) in self.key_actions.items() if a.help != ""}))
+                self.text.insert(END,
+                                 self.help_text({k: a.help for (k, a) in self.key_actions.items() if a.help != ""}))
+                self.world = World(self.robot)
             except Exception as e:
                 print(f"Failed. Exception - {e}")
                 self.auto_connect = False
                 tkinter.messagebox.showinfo('Failed', "Sorry, couldn't connect to " + str(port))
+                self.robot = None
 
     def on_help(self):
         """
         Display help text
         """
-        tkinter.messagebox.showinfo('Help', self.help_text({k: a.help for (k, a) in self.key_actions.items() if a.help != ""}))
+        tkinter.messagebox.showinfo('Help',
+                                    self.help_text({k: a.help for (k, a) in self.key_actions.items() if a.help != ""}))
 
     def on_quit(self):
         """
@@ -307,23 +320,27 @@ class TetheredDriveApp(Tk):
         """
         rr is a decorator that imposes a requirement for a connection to a robot before launching a command
         """
+
         def require_robot(self, *args, **kwargs):
             if self.robot is None:
                 pass
                 tkinter.messagebox.showinfo('Error', "Robot Not Connected!")
                 return
             foo(self, *args, **kwargs)
+
         return require_robot
 
     def need_sensors(foo):
         """
          rr is a decorator that imposes a requirement for a connection to a robot before launching a command
         """
+
         def need_sensors_inner(self, *args, **kwargs):
             if self.robot is not None:
                 if self.sensor_poller is None:
                     self.sensor_poller = cl.RepeatTimer(.5, self.safe_drive_monitor, autostart=True)
             foo(self, *args, **kwargs)
+
         return need_sensors_inner
 
     def shutdown(self):
@@ -344,7 +361,7 @@ class TetheredDriveApp(Tk):
         """
         gets sensors from the robot prints their values to stdout
         """
-        sensors = self.robot.get_sensors()
+        sensors = self.world.sense()
         sensor_str = self.pretty_print(sensors)
         print(sensor_str)
 
@@ -377,7 +394,7 @@ class TetheredDriveApp(Tk):
         :param vel_rot: tuple containing linear and angular acceleration (vel,rot)
         """
 
-        self.robot.drive_direct(vel_rot[1], -vel_rot[1])
+        self.world.update_wheel_velocities(vel_rot[1], -vel_rot[1])
 
     @rr
     def add_motion(self, vel_rot):
@@ -386,11 +403,11 @@ class TetheredDriveApp(Tk):
         tuple and forwards to send_motion
         :param vel_rot: tuple containing linear and angular acceleration (vel,rot)
         """
-        self.robot.drive_direct(vel_rot[0], vel_rot[0])
+        self.world.update_wheel_velocities(vel_rot[0], vel_rot[0])
 
     @rr
     def query_light_sensors(self):
-        sensors = self.robot.get_sensors()
+        sensors = self.world.sense()
         print([
             sensors.light_bumper_right,
             sensors.light_bumper_front_right,
@@ -406,10 +423,9 @@ class TetheredDriveApp(Tk):
             sensors.light_bumper.left]
         )
 
-
     @rr
     def query_wall_cliff_signals(self):
-        sensors = self.robot.get_sensors()
+        sensors = self.world.sense()
         message = "Wall Signal: {}\n\nCliff Left Signal: {}\n\nCliff Front Left Signal: {}\n\nCliff Front Right Signal: {}\n\nCliff Right Signal: {}".format(
             sensors.wall_signal,
             sensors.cliff_left_signal,
@@ -422,7 +438,7 @@ class TetheredDriveApp(Tk):
 
     @rr
     def query_group_3(self):
-        sensors = self.robot.get_sensors()
+        sensors = self.world.sense()
 
         message = "Charging State: {}\n\nVoltage: {} mV\n\nCurrent: {} mA\n\nTemperature: {} C\n\nBattery Charge: {} mAh\n\nBattery Capacity: {} mAh".format(
             ["Not charging", "Reconditioning Charging", "Full Charging",
@@ -473,15 +489,13 @@ class TetheredDriveApp(Tk):
             print("Enabling bump sensor collision mode")
             self.bump_sensor_mode = True
 
-
     @rr
     @need_sensors
     def move_endless(self):
         """
         Begin endless forward motion, that can be paused with bump/light sensors
         """
-        self.actions.append(MoveTimeAction(self.robot, 200, 200, 0))
-
+        self.actions.append([MoveTimeAction(self.world, 200, 200, 0)])
 
     @rr
     @need_sensors
@@ -492,7 +506,7 @@ class TetheredDriveApp(Tk):
         :param dist_in_mm: distance to move in millimeters
         """
         t = (dist_in_mm * 1000) / 200
-        self.actions.append(MoveTimeAction(self.robot, 200, 200, t))
+        self.actions.append([MoveTimeAction(self.world, 200, 200, t)])
 
     @rr
     @need_sensors
@@ -504,7 +518,11 @@ class TetheredDriveApp(Tk):
         :return:
         """
         print("Beginning Wall Follow. H to stop")
-        self.actions.append(WallFollowAction(self.robot, 300))
+        self.actions.append([CollisionBackupAction(self.world, 50, 3),
+                             TurnLeftToClearAction(self.world, 100),
+                             WanderAction(self.world, 200, 200),
+                             WallFollowAction(self.world, 300),
+                             ])
 
     @rr
     def move_halt(self):
@@ -513,7 +531,6 @@ class TetheredDriveApp(Tk):
         """
         self.bot_events.put(EventFinish)
         pass
-
 
     @rr
     def move_pause(self):
@@ -530,18 +547,19 @@ class TetheredDriveApp(Tk):
 
     @rr
     def safe_drive_monitor(self):
-        sensors = self.robot.get_sensors()
+        sensors = self.world.Sense(refresh=True)
         pause = False
+        collide = False
 
         if self.bump_sensor_mode:
             if sensors.bumps_wheeldrops.bump_left or sensors.bumps_wheeldrops.bump_right:
-                pause = True
+                collide = True
         else:
             if sensors.bumps_wheeldrops.bump_left or sensors.bumps_wheeldrops.bump_right:
-                pause = True
+                collide = True
             if sensors.light_bumper.center_left \
                     or sensors.light_bumper.center_right:
-                #print("LIGHT sensors triggered: {}, {}, {}, {}, {}, {}".format(
+                # print("LIGHT sensors triggered: {}, {}, {}, {}, {}, {}".format(
                 #      sensors.light_bumper_left,
                 #      sensors.light_bumper_right,
                 #      sensors.light_bumper_front_left,
@@ -550,8 +568,10 @@ class TetheredDriveApp(Tk):
                 #      sensors.light_bumper_center_right))
                 pause = True
 
-        if pause:
+        if collide:
             self.bot_events.put(self.collision_event)
+        elif pause:
+            self.bot_events.put(self.front_event)
         else:
             if isinstance(self.collision_event, EventPause):
                 self.bot_events.put(EventResume())
@@ -564,24 +584,133 @@ class World:
     representation with new data
     """
 
-    def __init__(self):
-        # min/max world extents, as viewed from above in 2 dimensions.  y-up is the along the inital forward direction
-        # of the robot
-        self.max_x = 0
-        self.min_x = 0
-        self.max_y = 0
-        self.min_y = 0
-        self.cur_x = 0
-        self.cur_y = 0
+    def __init__(self, robotref, grid_resolution=500, grid_size=101, initial_position=None):
+        self.robot = robotref
+        # Latest sensor reading, retrieved using GetSensors. This should be considered the "Truth" for sensor data, and
+        # should only be refreshed in one place during behaviors
+        self.sensors = None
+
+        # Odometry
+        # useful metrics
+        self.D = self.robot.WHEEL_BASE  # distance between wheels
+        self.max_wheel_velocity = 500  # maximum possible wheel velocity (linear)
+        self.grid_resolution = grid_resolution
+        self.grid_size = grid_size
+
+        # position / state tracking
+        if initial_position is None:
+            # default initial position is somewhere in the middle of the occupancy grid.
+            initial_position = [grid_resolution * grid_size / 2, grid_resolution * grid_size / 2, 0]
+        self.x = 0  # Current x position +x is forward from robot's initial orientation
+        self.y = 0  # Current y position
+        self.theta = 0  # Current angle w.r.t starting orientation
+
+        # velocity tracking
+        self.v_L = 0  # Latest left wheel velocity (linear)
+        self.v_R = 0  # Latest Right wheel Velocity (linear)
+        self.last_update_time = time.time_ns()  # Latest wheel velocity update. Velocity is constant for the duration
+
+        # World representation;  occupancy grid with landmarks
+        self.landmarks = []
+        self.occupancy_grid = [[0 for _ in range(grid_size)] for _ in range(grid_size)]
 
         # statistics
         # total distance traveled
         self.total_dist = 0
 
-# d = distance from right wall
-# r = reference distance
-# e = d - r
-# theta_dot =
+    def sense(self, refresh=False):
+        """
+        Gather latest sensor data if we've never done so, or refresh is true
+        """
+        if refresh is True or self.sensors is None:
+            self.sensors = self.robot.get_sensors()
+
+        return self.sensors
+
+    def update_wheel_velocities(self, v_l, v_r):
+        """
+        Provide an update to wheel velocities for odometry purposes.
+        """
+        # get the current time and calculate how much time has passed since the last update
+        current_time = time.time_ns()
+        dt = current_time - self.last_update_time
+
+        # update odometry
+        self.update_position(dt)
+
+        # update occupancy grid
+        self.update_free_area(self.x, self.y)
+
+        # save the newly set wheel velocities, making sure the wheel velocities don't exceed max; we should probably
+        # throw some kind of error if this occurs as it would probably mean that odometry is borked.
+        self.v_L = max(min(v_l, self.max_wheel_velocity), -self.max_wheel_velocity)
+        self.v_R = max(min(v_r, self.max_wheel_velocity), -self.max_wheel_velocity)
+
+        # send the actual drive command to the robot. convenient to do this here, though it's a bit ugly from a
+        # dependency standpoint
+        self.robot.drive_direct(int(v_l), int(v_r))
+
+        # set the last update time for future reference.
+        self.last_update_time = current_time
+
+    def update_position(self, dt):
+        """
+        Update odometry information based on wheel velocities and time.  This is about as accurate as a blind person
+        throwing darts on a spinning table, but it's what we have.
+        """
+
+        # Angular velocity of robot based on independent wheel velocities.
+        omega = (self.v_R - self.v_L) / self.D
+
+        if self.v_L != self.v_R:
+            # non-equal velocities create an arc of movement
+            r = self.D * (self.v_L + self.v_R) / (2 * (self.v_R - self.v_L))
+            d_theta = omega * dt
+
+            self.x += r * (math.sin(self.theta + d_theta) - math.sin(self.theta))
+            self.y += r * (math.cos(self.theta) - math.cos(self.theta + d_theta))
+            self.theta += d_theta
+        else:
+            # equal velocities produce a linear-ish position calculation
+            # velocity component
+            v = (self.v_R + self.v_L) / 2
+            self.x += v * dt * math.cos(self.theta)
+            self.y += v * dt * math.sin(self.theta)
+
+    def add_landmark(self, x, y, label):
+        """
+        adds a 3-tuple to the landmarks list, x, y, and a label.  needs a lot more for it to be useful...
+        """
+        self.landmarks.append((x, y, label))
+
+    def update_free_area(self, x, y):
+        """
+        Updates the occupancy grid based on a given x,y world position. We assume that if the robot can be at the
+        position, the space is unoccupied
+        """
+        grid_x = int(x / self.grid_resolution)
+        grid_y = int(y / self.grid_resolution)
+
+        self.occupancy_grid[grid_x][grid_y] = 1
+
+    def get_position(self):
+        """
+        returns the current robot position for printing purposes or whatever
+        """
+        return self.x, self.y, self.theta
+
+    def get_landmarks(self):
+        """
+        gets the list of landmark tuples
+        """
+        return self.landmarks
+
+    def get_occupancy_grid(self):
+        """
+        gets the occupancy grid (list of lists)
+        """
+        return self.occupancy_grid
+
 
 class ErrHistory(object):
     def __init__(self, size):
@@ -633,7 +762,7 @@ class PID_Control:
     def PID(self, error):
         p = self.kp * error
         if len(self.past) > 0:
-            i = self.ki * (sum(self.past)/len(self.past))
+            i = self.ki * (sum(self.past) / len(self.past))
         else:
             i = 0
         if len(self.past) > 1:
@@ -645,99 +774,218 @@ class PID_Control:
         return p + i + d
 
 
+class CollisionBackupAction:
+    def __init__(self, worldref, vel, t):
+        self.active = False
+        self.world = worldref
+        self.vel = vel
+        self.total_t = t
+        self.elapsed_t = 0
+
+    def begin(self):
+        pass
+
+    def _start_motion(self):
+        # send command to start robot with configured velocities
+        self.world.update_wheel_velocities(-self.vel, -self.vel)
+
+    def _stop_motion(self):
+        # send command to stop robot
+        self.world.update_wheel_velocities(0, 0)
+
+    def update(self, evt):
+        match evt:
+            case EVENT_TYPE.COLLIDE:
+                self.active = True
+                self._start_motion()
+            case EVENT_TYPE.FINISH:
+                self._stop_motion()
+                return UPDATE_RESULT.DONE
+
+            case EVENT_TYPE.TIMER:
+                if self.active:
+                    self.elapsed_t += evt.data
+                    if 0 < self.total_t <= self.elapsed_t:
+                        self._stop_motion()
+                        self.active = False
+                        return UPDATE_RESULT.DONE
+                    else:
+                        return UPDATE_RESULT.BREAK
+            case _:
+                print("")
+        return UPDATE_RESULT.OK
+
+
+class TurnLeftToClearAction:
+    def __init__(self, worldref, vel):
+        self.active = False
+        self.world = worldref
+        self.vel = vel
+
+    def begin(self):
+        pass
+
+    def _start_motion(self):
+        # send command to start robot with configured velocities
+        self.world.update_wheel_velocities(-self.vel, self.vel)
+
+    def _stop_motion(self):
+        # send command to stop robot
+        self.world.update_wheel_velocities(0, 0)
+
+    def update(self, evt):
+        match evt:
+            case EVENT_TYPE.FRONT:
+                self.active = True
+
+            case EVENT_TYPE.FINISH:
+                self._stop_motion()
+                return UPDATE_RESULT.DONE
+
+            case EVENT_TYPE.TIMER:
+                if self.active:
+                    sensors = self.world.sense()
+                    if sensors.light_bumper_center_left < 20 \
+                            and sensors.light_bumper_front_left < 20 \
+                            and sensors.light_bumper_center_right < 20:
+                        self.active = False
+                        return UPDATE_RESULT.DONE
+
+            case _:
+                print("")
+        return UPDATE_RESULT.OK
+
+
 class WallFollowAction:
-    def __init__(self, robotref, baseVel):
+    def __init__(self, worldref, baseVel):
         self.basevel = baseVel
         self.rvel = baseVel
         self.lvel = baseVel
         self.elapsed_t = 0
-        self.paused = False
-        self.robot = robotref
+        self.world = worldref
         self.controller = PID_Control(6, .1, 30)
+        self.moving = False
         print("New PID Created")
 
     def begin(self):
-        self._start_motion()
+        pass
 
     def _start_motion(self):
         # send command to start robot with configured velocities
-        self.robot.drive_direct(self.rvel, self.lvel)
+        self.world.update_wheel_velocities(self.rvel, self.lvel)
+        self.moving = True
 
     def _stop_motion(self):
         # send command to stop robot
-        self.robot.drive_stop()
-        pass
+        self.world.update_wheel_velocities(0, 0)
+        self.moving = False
 
     def update(self, evt):
         match evt.type:
-            case EVENT_TYPE.PAUSE:
-                print("Motion stopping")
-                # halt wheel motion
-                self._stop_motion()
-                self.paused = True
-                return UPDATE_RESULT.DONE
-            case EVENT_TYPE.RESUME:
-                # start wheel motion again
-                if self.paused:
-                    self._start_motion()
-                self.paused = False
             case EVENT_TYPE.FINISH:
                 print("Motion stopping")
                 self._stop_motion()
                 return UPDATE_RESULT.DONE
             case EVENT_TYPE.TIMER:
-                if not self.paused:
-                    sensors = self.robot.get_sensors()
-                    u = self.controller.PID(200 - sensors.light_bumper_right)
+                if not self.moving:
+                    self._start_motion()
 
-                    #print("R:{}, PID:{}".format(sensors.light_bumper_right, u))
-                    if sensors.light_bumper_right == 0:
-                        print("Lost Wall!")
-                        self.rvel = self.basevel + 150 #dev
-                        self.lvel = self.basevel - 150 #dev
-                        self._start_motion()
-                        #self._stop_motion()
-                        #return UPDATE_RESULT.DONE
+                sensors = self.world.sense()
+                u = self.controller.PID(200 - sensors.light_bumper_right)
 
-                    elif u > 0:
-                        dev = int(u)
-                        print("r {}".format(dev))
-                        if dev > 50:
-                            dev = 50
-                        self.rvel = self.basevel + dev
-                        self.lvel = self.basevel - dev
-                        self._start_motion()
-                    elif u < 0:
-                        dev = int(u)
-                        print("l {}".format(dev))
-                        if dev < -50:
-                            dev = -50
-                        self.rvel = self.basevel + dev
-                        self.lvel = self.basevel - dev
-                        self._start_motion()
+                # print("R:{}, PID:{}".format(sensors.light_bumper_right, u))
+                if sensors.light_bumper_right == 0:
+                    print("Lost Wall!")
+                    self.rvel = self.basevel + 150  # dev
+                    self.lvel = self.basevel - 150  # dev
+                    self._start_motion()
+                    # self._stop_motion()
+                    # return UPDATE_RESULT.DONE
 
-                    #print("continuing")
+                elif u > 0:
+                    dev = int(u)
+                    print("r {}".format(dev))
+                    if dev > 50:
+                        dev = 50
+                    self.rvel = self.basevel + dev
+                    self.lvel = self.basevel - dev
+                    self._start_motion()
+                elif u < 0:
+                    dev = int(u)
+                    print("l {}".format(dev))
+                    if dev < -50:
+                        dev = -50
+                    self.rvel = self.basevel + dev
+                    self.lvel = self.basevel - dev
+                    self._start_motion()
+
+            case _:
+                print("")
+        return UPDATE_RESULT.OK
+
+
+class WanderAction:
+    def __init__(self, worldref, rvel, lvel):
+        self.rvel = rvel
+        self.lvel = lvel
+        self.world = worldref
+        self.complete = False
+        self.moving = False
+
+    def _start_motion(self):
+        # send command to start robot with configured velocities
+        self.world.update_wheel_velocities(self.rvel, self.lvel)
+        self.moving = True
+
+    def _stop_motion(self):
+        # send command to stop robot
+        self.world.update_wheel_velocities(0, 0)
+        self.moving = False
+
+    def begin(self):
+        pass
+
+    def update(self, evt):
+        match evt.type:
+            case EVENT_TYPE.FRONT:
+                self._stop_motion()
+                self.complete = True
+            case EVENT_TYPE.COLLIDE:
+                self._stop_motion()
+                self.complete = True
+                return UPDATE_RESULT.DONE
+            case EVENT_TYPE.TIMER:
+                if not self.complete:
+                    if not self.moving:
+                        self._start_motion()
+                    return UPDATE_RESULT.BREAK
+            #     if not self.paused:
+            #         self.elapsed_t += evt.data
+            #         if 0 < self.total_t <= self.elapsed_t:
+            #             self._stop_motion()
+            #             return UPDATE_RESULT.DONE
+            #         print(".", end="")
             case _:
                 print("")
         return UPDATE_RESULT.OK
 
 
 class MoveTimeAction:
-    def __init__(self, robotref, rvel, lvel, t):
+    def __init__(self, worldref, rvel, lvel, t):
         self.rvel = rvel
         self.lvel = lvel
         self.total_t = t
         self.elapsed_t = 0
         self.paused = False
-        self.robot = robotref
+        self.world = worldref
 
     def _start_motion(self):
         # send command to start robot with configured velocities
-        self.robot.drive_direct(self.rvel, self.lvel)
+        self.world.update_wheel_velocities(self.rvel, self.lvel)
 
     def _stop_motion(self):
         # send command to stop robot
-        self.robot.drive_stop()
+        self.world.update_wheel_velocities(0, 0)
         pass
 
     def begin(self):
@@ -747,7 +995,7 @@ class MoveTimeAction:
 
     def update(self, evt):
         match evt.type:
-            case EVENT_TYPE.PAUSE:
+            case EVENT_TYPE.FRONT:
                 # halt wheel motion
                 print("P", end="")
                 self._stop_motion()
@@ -758,15 +1006,16 @@ class MoveTimeAction:
                     print("R", end="")
                     self._start_motion()
                 self.paused = False
-            case EVENT_TYPE.FINISH:
-                print("E {}s {}m".format(self.elapsed_t/1000, (self.elapsed_t*self.rvel)/(1000*1000)), end="")
+            case EVENT_TYPE.COLLIDE:
+                print("E {}s {}m".format(self.elapsed_t / 1000, (self.elapsed_t * self.rvel) / (1000 * 1000)), end="")
                 self._stop_motion()
                 return UPDATE_RESULT.DONE
             case EVENT_TYPE.TIMER:
                 if not self.paused:
                     self.elapsed_t += evt.data
                     if 0 < self.total_t <= self.elapsed_t:
-                        print("E {}s {}m".format(self.elapsed_t/1000, (self.elapsed_t*self.rvel)/(1000*1000)), end="")
+                        print("E {}s {}m".format(self.elapsed_t / 1000, (self.elapsed_t * self.rvel) / (1000 * 1000)),
+                              end="")
                         self._stop_motion()
                         return UPDATE_RESULT.DONE
                     print(".", end="")
@@ -783,18 +1032,21 @@ class MoveTimeAction:
 
 
 class UPDATE_RESULT(enum.IntEnum):
-    OK = 0x01
-    DONE = 0x02
+    OK = 0x01  # Normal, all is okay update result
+    DONE = 0x02  # Done, individual action has completed its task.
     TERMINATE = 0x03
+    BREAK = 0x04
 
 
 class EVENT_TYPE(enum.IntEnum):
-    MESSAGE = 0x01
-    TIMER = 0x02
-    PAUSE = 0x03
-    RESUME = 0x04
-    BEGIN = 0x05
-    FINISH = 0x06
+    MESSAGE = 0x01  # Arbitrary  message event, with text data, can pass between actions
+    TIMER = 0x02  # Timer event, generally a heartbeat, frequently sent message
+    PAUSE = 0x03  # Pause event, Pause activity with the expectation of later resume
+    RESUME = 0x04  # Resume event, Resume paused activity
+    BEGIN = 0x05  # Begin event, Sent at the start of an action set
+    FINISH = 0x06  # Finish event, Terminate action
+    COLLIDE = 0x07  # Collide event, Bumper collision
+    FRONT = 0x08  # Front event, Light bumper notification of impending collision
 
 
 class EventBeginAction:
@@ -839,6 +1091,20 @@ class EventFinish:
         pass
 
 
+class EventCollide:
+    type = EVENT_TYPE.COLLIDE
+
+    def __init__(self):
+        pass
+
+
+class EventFront:
+    type = EVENT_TYPE.FRONT
+
+    def __init__(self):
+        pass
+
+
 class EventQueue:
     def __init__(self):
         self.r, self.w = multiprocessing.Pipe(False)
@@ -863,8 +1129,9 @@ class ActionSequence(threading.Thread):
     Upon startup, The ActionSequence runs the first configured action, then waits for events, using a select.select()
     call on all queues.
     """
+
     def __init__(self, polling_rate):
-        self.actions = []
+        self.action_sets = []
         self.current_action = 0
         self.event_queues = []
         self.exception_queues = []
@@ -879,9 +1146,9 @@ class ActionSequence(threading.Thread):
         super().__init__(daemon=True)
         self.start()
 
-    def append(self, action):
-        self.actions.append(action)
-        if len(self.actions) == self.current_action + 1:
+    def append(self, action_set):
+        self.action_sets.append(action_set)
+        if len(self.action_sets) == self.current_action + 1:
             self.next_action.put(EventBeginAction())
 
     def register_event(self, evt):
@@ -892,12 +1159,15 @@ class ActionSequence(threading.Thread):
 
     def run(self):
         print("Starting ActionSequence")
-        hb_timer = cl.RepeatTimer(self.polling_rate/1000, self.heartbeat.put, EventTimer(self.polling_rate), autostart=True)
+        hb_timer = cl.RepeatTimer(self.polling_rate / 1000, self.heartbeat.put, EventTimer(self.polling_rate),
+                                  autostart=True)
         while True:
 
             evt_list, _, ex_list = select.select(self.event_queues, [], self.exception_queues)
             for e in ex_list:
-                self.actions[self.current_action].cancel(e.get())
+                for a in self.action_sets[self.current_action]:
+                    a.cancel(e.get())
+                # self.action_sets[self.current_action].cancel(e.get())
                 # we only need to respond to the first exception?
 
                 hb_timer.stop()
@@ -909,31 +1179,38 @@ class ActionSequence(threading.Thread):
             for e in evt_list:
                 evt = e.get()
                 if evt.type == EVENT_TYPE.BEGIN:
-                    self.actions[self.current_action].begin()
+                    for a in self.action_sets[self.current_action]:
+                        a.begin()
+                    # self.actions[self.current_action].begin()
                     continue
 
-                if self.current_action > len(self.actions) - 1:
+                if self.current_action > len(self.action_sets) - 1:
                     # no current action, so just consume incoming events
                     continue
-                # pass the event details to the current action for processing
-                result = self.actions[self.current_action].update(evt)
-                match result:
-                    case UPDATE_RESULT.OK:
-                        # Nothing to do here, the update was all good
-                        continue
-                    case UPDATE_RESULT.DONE:
-                        # Action is done, get ready to move to the next one
-                        start_next_action = True
-                    case UPDATE_RESULT.TERMINATE:
-                        hb_timer.stop()
-                        # We possibly want to post an exception here instead, for better cleanup
-                        return
-                    case _:
-                        print("UNDEFINED RESULT!")
+                # pass the event details to the current action set for processing
+                for a in self.action_sets[self.current_action]:
+                    result = a.update(evt)
+                    # result = self.action_sets[self.current_action].update(evt)
+                    match result:
+                        case UPDATE_RESULT.BREAK:
+                            # Halt processing of action set, this is a "consumed event" case
+                            break
+                        case UPDATE_RESULT.OK:
+                            # Nothing to do here, the update was all good
+                            continue
+                        case UPDATE_RESULT.DONE:
+                            # Action is done, get ready to move to the next one
+                            start_next_action = True
+                        case UPDATE_RESULT.TERMINATE:
+                            hb_timer.stop()
+                            # We possibly want to post an exception here instead, for better cleanup
+                            return
+                        case _:
+                            print("UNDEFINED RESULT!")
             # check our flag; if any of the events resulted in the action reaching completion, we want to go to the next
             if start_next_action:
                 self.current_action += 1
-                if len(self.actions) > self.current_action:
+                if len(self.action_sets) > self.current_action:
                     self.next_action.put(EventBeginAction())
 
 
