@@ -173,7 +173,7 @@ class TetheredDriveApp(Tk):
         self.world = None
 
         # bot behavior controller
-        self.actions = ActionSequence(100)
+        self.actions = ActionSequence(50)
         self.bot_events = EventQueue()
         self.actions.register_event(self.bot_events)
         self.manually_paused = False
@@ -518,11 +518,16 @@ class TetheredDriveApp(Tk):
         :return:
         """
         print("Beginning Wall Follow. H to stop")
-        self.actions.append([CollisionBackupAction(self.world, 50, 3),
-                             TurnLeftToClearAction(self.world, 100),
-                             WanderAction(self.world, 200, 200),
-                             WallFollowAction(self.world, 300),
+        self.actions.append([
+                                WanderAction(self.world, 200, 200),
+                                TurnRightToClearAction(self.world, 80),
+                                WallFollowAction(self.world, 70)
                              ])
+        #self.actions.append([CollisionBackupAction(self.world, 50, 3),
+        #                     TurnLeftToClearAction(self.world, 100),
+        #                     WanderAction(self.world, 200, 200),
+        #                     WallFollowAction(self.world, 300)
+        #                     ])
 
     @rr
     def move_halt(self):
@@ -547,7 +552,7 @@ class TetheredDriveApp(Tk):
 
     @rr
     def safe_drive_monitor(self):
-        sensors = self.world.Sense(refresh=True)
+        sensors = self.world.sense(refresh=True)
         pause = False
         collide = False
 
@@ -557,8 +562,12 @@ class TetheredDriveApp(Tk):
         else:
             if sensors.bumps_wheeldrops.bump_left or sensors.bumps_wheeldrops.bump_right:
                 collide = True
-            if sensors.light_bumper.center_left \
-                    or sensors.light_bumper.center_right:
+            #if sensors.light_bumper.center_left \
+            #        or sensors.light_bumper.center_right:
+            if sensors.light_bumper_center_right > 300 \
+                    or sensors.light_bumper_center_left > 300 \
+                    or sensors.light_bumper_front_left > 300:
+                print("Collision!!")
                 # print("LIGHT sensors triggered: {}, {}, {}, {}, {}, {}".format(
                 #      sensors.light_bumper_left,
                 #      sensors.light_bumper_right,
@@ -592,7 +601,7 @@ class World:
 
         # Odometry
         # useful metrics
-        self.D = self.robot.WHEEL_BASE  # distance between wheels
+        self.D = 235 #self.robot.WHEEL_BASE  # distance between wheels
         self.max_wheel_velocity = 500  # maximum possible wheel velocity (linear)
         self.grid_resolution = grid_resolution
         self.grid_size = grid_size
@@ -688,10 +697,11 @@ class World:
         Updates the occupancy grid based on a given x,y world position. We assume that if the robot can be at the
         position, the space is unoccupied
         """
-        grid_x = int(x / self.grid_resolution)
-        grid_y = int(y / self.grid_resolution)
+        #grid_x = int(x / self.grid_resolution)
+        #grid_y = int(y / self.grid_resolution)
 
-        self.occupancy_grid[grid_x][grid_y] = 1
+        #self.occupancy_grid[grid_x][grid_y] = 1
+        pass
 
     def get_position(self):
         """
@@ -757,7 +767,7 @@ class PID_Control:
         self.kp = kp
         self.ki = ki
         self.kd = kd
-        self.past = ErrHistory(5)
+        self.past = ErrHistory(10)
 
     def PID(self, error):
         p = self.kp * error
@@ -794,22 +804,23 @@ class CollisionBackupAction:
         self.world.update_wheel_velocities(0, 0)
 
     def update(self, evt):
-        match evt:
+        match evt.type:
             case EVENT_TYPE.COLLIDE:
+                print("LEFT MOVE COLLIDE")
                 self.active = True
                 self._start_motion()
             case EVENT_TYPE.FINISH:
-                self._stop_motion()
-                return UPDATE_RESULT.DONE
-
+                if self.active:
+                    self._stop_motion()
+                    return UPDATE_RESULT.DONE
             case EVENT_TYPE.TIMER:
                 if self.active:
                     self.elapsed_t += evt.data
                     if 0 < self.total_t <= self.elapsed_t:
                         self._stop_motion()
                         self.active = False
-                        return UPDATE_RESULT.DONE
                     else:
+                        print("eating - backup")
                         return UPDATE_RESULT.BREAK
             case _:
                 print("")
@@ -834,25 +845,95 @@ class TurnLeftToClearAction:
         self.world.update_wheel_velocities(0, 0)
 
     def update(self, evt):
-        match evt:
+        match evt.type:
             case EVENT_TYPE.FRONT:
                 self.active = True
-
+                self._start_motion()
             case EVENT_TYPE.FINISH:
-                self._stop_motion()
-                return UPDATE_RESULT.DONE
-
+                if self.active:
+                    self._stop_motion()
+                    return UPDATE_RESULT.DONE
             case EVENT_TYPE.TIMER:
                 if self.active:
                     sensors = self.world.sense()
+                    #print("TURN LEFT TURNING", [sensors.light_bumper_center_left, sensors.light_bumper_front_left, sensors.light_bumper_center_right])
                     if sensors.light_bumper_center_left < 20 \
                             and sensors.light_bumper_front_left < 20 \
+                            and sensors.light_bumper_front_right < 20 \
                             and sensors.light_bumper_center_right < 20:
+                        self._stop_motion()
                         self.active = False
-                        return UPDATE_RESULT.DONE
-
+                    else:
+                        print("eating - left")
+                        return UPDATE_RESULT.BREAK
             case _:
-                print("")
+                print("miscevent", evt.type)
+        return UPDATE_RESULT.OK
+
+
+class TurnRightToClearAction:
+    def __init__(self, worldref, vel):
+        self.active = False
+        self.world = worldref
+        self.vel = vel
+        self.lostright = False
+        self.ismoving = False
+
+    def begin(self):
+        pass
+
+    def _start_motion(self):
+        # send command to start robot with configured velocities
+        self.lostright = False
+        self.ismoving = True
+        print("RIGHT START")
+        self._stop_motion()
+        self.world.update_wheel_velocities(self.vel, -self.vel)
+
+    def _stop_motion(self):
+        self.ismoving = False
+        # send command to stop robot
+        self.world.update_wheel_velocities(0, 0)
+
+    def update(self, evt):
+        match evt.type:
+            case EVENT_TYPE.FRONT:
+                self.active = True
+                self._start_motion()
+            case EVENT_TYPE.FINISH:
+                if self.active:
+                    self._stop_motion()
+                    return UPDATE_RESULT.DONE
+            case EVENT_TYPE.TIMER:
+                if self.active:
+
+                    sensors = self.world.sense()
+                    if self.lostright == True:
+                        print("NoRight")
+                        if sensors.light_bumper_right > 50:
+                            print("SeeRight")
+                            self._stop_motion()
+                            self.active = False
+                            return UPDATE_RESULT.OK
+
+                    if sensors.light_bumper_right < 10:
+                        print("Lostright")
+                        self.lostright = True
+
+                    return UPDATE_RESULT.BREAK
+
+                    #print("TURN LEFT TURNING", [sensors.light_bumper_center_left, sensors.light_bumper_front_left, sensors.light_bumper_center_right])
+                    # if sensors.light_bumper_center_left < 20 \
+                    #         and sensors.light_bumper_front_left < 20 \
+                    #         and sensors.light_bumper_front_right < 20 \
+                    #         and sensors.light_bumper_center_right < 20:
+                    #     self._stop_motion()
+                    #     self.active = False
+                    #else:
+                    #    print("eating - right")
+                    #    return UPDATE_RESULT.BREAK
+            case _:
+                print("miscevent", evt.type)
         return UPDATE_RESULT.OK
 
 
@@ -889,15 +970,16 @@ class WallFollowAction:
             case EVENT_TYPE.TIMER:
                 if not self.moving:
                     self._start_motion()
+                print("follow timer ")
 
                 sensors = self.world.sense()
-                u = self.controller.PID(200 - sensors.light_bumper_right)
+                u = self.controller.PID(125 - sensors.light_bumper_right)
 
                 # print("R:{}, PID:{}".format(sensors.light_bumper_right, u))
                 if sensors.light_bumper_right == 0:
                     print("Lost Wall!")
-                    self.rvel = self.basevel + 150  # dev
-                    self.lvel = self.basevel - 150  # dev
+                    self.rvel = self.basevel + 70  # dev
+                    self.lvel = self.basevel - 70  # dev
                     self._start_motion()
                     # self._stop_motion()
                     # return UPDATE_RESULT.DONE
@@ -907,6 +989,7 @@ class WallFollowAction:
                     print("r {}".format(dev))
                     if dev > 50:
                         dev = 50
+                    dev=20
                     self.rvel = self.basevel + dev
                     self.lvel = self.basevel - dev
                     self._start_motion()
@@ -915,6 +998,7 @@ class WallFollowAction:
                     print("l {}".format(dev))
                     if dev < -50:
                         dev = -50
+                        dev=-20
                     self.rvel = self.basevel + dev
                     self.lvel = self.basevel - dev
                     self._start_motion()
@@ -948,8 +1032,9 @@ class WanderAction:
     def update(self, evt):
         match evt.type:
             case EVENT_TYPE.FRONT:
-                self._stop_motion()
-                self.complete = True
+                if not self.complete:
+                    self._stop_motion()
+                    self.complete = True
             case EVENT_TYPE.COLLIDE:
                 self._stop_motion()
                 self.complete = True
@@ -958,6 +1043,7 @@ class WanderAction:
                 if not self.complete:
                     if not self.moving:
                         self._start_motion()
+                    print("eating - wander")
                     return UPDATE_RESULT.BREAK
             #     if not self.paused:
             #         self.elapsed_t += evt.data
