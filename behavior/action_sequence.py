@@ -9,8 +9,9 @@ import createlib as cl
 class UPDATE_RESULT(enum.IntEnum):
     OK = 0x01  # Normal, all is okay update result
     DONE = 0x02  # Done, individual action has completed its task.
-    TERMINATE = 0x03
-    BREAK = 0x04
+    TERMINATE = 0x03 # Something went wrong, terminate everything
+    BREAK = 0x04  # Action has done work, and no further actions should respond to the most recent event
+    PASS = 0x09   # Pass, use for when an action is not active or is otherwise skipped
 
 
 class EVENT_TYPE(enum.IntEnum):
@@ -168,13 +169,13 @@ class ActionSequence(threading.Thread):
                     # result = self.action_sets[self.current_action].update(evt)
                     match result:
                         case UPDATE_RESULT.BREAK:
-                            # Halt processing of action set, this is a "consumed event" case
+                            # Skip remaining processing of action set, this is a "consumed event" case
                             break
                         case UPDATE_RESULT.OK:
                             # Nothing to do here, the update was all good
                             continue
                         case UPDATE_RESULT.DONE:
-                            # Action is done, get ready to move to the next one
+                            # Action set is done, get ready to move to the next one
                             start_next_action = True
                         case UPDATE_RESULT.TERMINATE:
                             hb_timer.stop()
