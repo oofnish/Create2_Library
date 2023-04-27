@@ -1,3 +1,5 @@
+import os
+
 from behavior.action_sequence import EVENT_TYPE, UPDATE_RESULT
 from behavior.pidcontrol import PID_Control
 
@@ -8,7 +10,7 @@ class Threshold:
     """
     Clear = 15      # Clear threshold -- the maximum reading that we consider to be a zero value when looking for zero
     Found = 50      # Found threshold -- the minimum reading that we consider to be a nonzero value when looking for it
-    Follow = 125    # Threshold for wall following distance
+    Follow = 300    # Threshold for wall following distance
 
 
 class Action:
@@ -46,15 +48,18 @@ class CollisionBackupAction(Action):
         pass
 
     def activate(self):
+        print("Activating Collision Backup")
         super().activate()
         self.elapsed_t = 0
         self._start_motion()
 
     def deactivate(self):
         super().deactivate()
+        print("why deactivate")
         self._stop_motion()
 
     def _start_motion(self):
+        print("Starting motion")
         # send command to start robot with configured velocities
         self.world.update_wheel_velocities(-self.vel, -self.vel)
 
@@ -77,9 +82,13 @@ class CollisionBackupAction(Action):
         result = UPDATE_RESULT.OK
         match evt.type:
             case EVENT_TYPE.COLLIDE:
-                self.activate()
+                if not self.active:
+                    print("why am I active")
+                    self.active = True
+                    self.activate()
                 result = UPDATE_RESULT.BREAK
             case EVENT_TYPE.FINISH:
+                print("finish here")
                 self.deactivate()
                 result = UPDATE_RESULT.DONE
             case EVENT_TYPE.TIMER:
@@ -108,6 +117,7 @@ class TurnLeftToClearAction(Action):
         pass
 
     def activate(self):
+        print("Activating Turn Left To Clear")
         super().activate()
         self._start_motion()
 
@@ -131,8 +141,8 @@ class TurnLeftToClearAction(Action):
 
         if sensors.light_bumper_center_left < Threshold.Clear \
                 and sensors.light_bumper_front_left < Threshold.Clear \
-                and sensors.light_bumper_front_right < Threshold.Clear \
-                and sensors.light_bumper_center_right < Threshold.Clear:
+                and sensors.light_bumper_front_right < Threshold.Clear:
+                #and sensors.light_bumper_center_right < Threshold.Clear:
             self.deactivate()
             return UPDATE_RESULT.OK
 
@@ -174,6 +184,7 @@ class TurnRightToClearAction(Action):
         pass
 
     def activate(self):
+        print("Activating Turn Right To Clear")
         super().activate()
         self._start_motion()
 
@@ -238,16 +249,25 @@ class WallFollowAction(Action):
         self.world = worldref
         self.controller = PID_Control(6, .1, 30)
         self.moving = False
+        self.readings = [0]*200000
+        self.ctl = [0]*200000
+        self.nreadings = 0
 
     def begin(self):
         pass
 
     def activate(self):
+        print("Activating Wall Follow")
         super().activate()
         self._start_motion()
 
     def deactivate(self):
         super().deactivate()
+        self.readings = self.readings[:self.nreadings]
+        with open('readings.txt', 'w') as file:
+            file.write('\n'.join([str(r) for r in self.readings]))
+        with open('ctl.txt', 'w') as file2:
+            file2.write('\n'.join([str(r) for r in self.ctl]))
         self._stop_motion()
 
     def _start_motion(self):
@@ -266,12 +286,16 @@ class WallFollowAction(Action):
 
         # HACK: bumper right == 0 causes too large a turn, so a crash happens... but we want it higher than normal
         # omega cap to make turns tight enough.  Robustify this
-        if sensors.light_bumper_right == 0:
-            self.rvel = self.basevel + 70  # dev
-            self.lvel = self.basevel - 70  # dev
-            self._start_motion()
+        # if sensors.light_bumper_right == 0:
+        #     self.rvel = self.basevel + 70  # dev
+        #     self.lvel = self.basevel - 70  # dev
+        #     self._start_motion()
 
         dev = int(u)
+
+        self.ctl[self.nreadings] = u
+        self.readings[self.nreadings] = sensors.light_bumper_right
+        self.nreadings += 1
 
         dev = max(min(dev, 50), -50)
         self.rvel = self.basevel + dev
@@ -325,6 +349,7 @@ class WanderAction(Action):
         pass
 
     def activate(self):
+        print("Activating Wander")
         super().activate()
         self.complete = False
         self._start_motion()
@@ -358,6 +383,8 @@ class WanderAction(Action):
         match evt.type:
             case EVENT_TYPE.FRONT:
                 self.deactivate()
+            case EVENT_TYPE.COLLIDE:
+                self.deactivate()
             case EVENT_TYPE.FINISH:
                 self.deactivate()
                 result = UPDATE_RESULT.DONE
@@ -387,30 +414,41 @@ class MoveTimeAction(Action):
         self.world.update_wheel_velocities(0, 0)
         pass
 
+    def activate(self):
+        print("Activating Move Time")
+        super().activate()
+        self._start_motion()
+
+    def deactivate(self):
+        super().deactivate()
+        self._stop_motion()
+
     def begin(self):
         # send command to drive robot with the configured wheel velocities
         self._start_motion()
         print("B", end="")
 
     def update(self, evt):
-        if super().update(self, evt) == UPDATE_RESULT.PASS:
-            return UPDATE_RESULT.PASS
+        result = UPDATE_RESULT.OK
         match evt.type:
             case EVENT_TYPE.FRONT:
                 # halt wheel motion
                 print("P", end="")
-                self._stop_motion()
+                self.deactivate()
                 self.paused = True
             case EVENT_TYPE.RESUME:
                 # start wheel motion again
                 if self.paused:
                     print("R", end="")
-                    self._start_motion()
+                    self.activate()
                 self.paused = False
             case EVENT_TYPE.COLLIDE:
                 print("E {}s {}m".format(self.elapsed_t / 1000, (self.elapsed_t * self.rvel) / (1000 * 1000)), end="")
-                self._stop_motion()
-                return UPDATE_RESULT.DONE
+                self.deactivate()
+                result = UPDATE_RESULT.DONE
+            case EVENT_TYPE.FINISH:
+                self.deactivate()
+                result = UPDATE_RESULT.DONE
             case EVENT_TYPE.TIMER:
                 if not self.paused:
                     self.elapsed_t += evt.data
@@ -418,11 +456,11 @@ class MoveTimeAction(Action):
                         print("E {}s {}m".format(self.elapsed_t / 1000, (self.elapsed_t * self.rvel) / (1000 * 1000)),
                               end="")
                         self._stop_motion()
-                        return UPDATE_RESULT.DONE
+                        result = UPDATE_RESULT.DONE
                     print(".", end="")
             case _:
                 print("")
-        return UPDATE_RESULT.OK
+        return result
 
     def cancel(self):
         if 0 < self.total_t <= self.elapsed_t:

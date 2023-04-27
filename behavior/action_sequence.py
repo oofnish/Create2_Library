@@ -171,7 +171,7 @@ class ActionSequence(threading.Thread):
                         case UPDATE_RESULT.BREAK:
                             # Skip remaining processing of action set, this is a "consumed event" case
                             break
-                        case UPDATE_RESULT.OK:
+                        case UPDATE_RESULT.OK | UPDATE_RESULT.PASS:
                             # Nothing to do here, the update was all good
                             continue
                         case UPDATE_RESULT.DONE:

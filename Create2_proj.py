@@ -47,7 +47,8 @@ import os, sys, glob  # for listing serial ports
 
 # Create Library
 import createlib as cl
-from behavior.action_behaviors import TurnRightToClearAction, WallFollowAction, WanderAction, MoveTimeAction
+from behavior.action_behaviors import TurnRightToClearAction, WallFollowAction, WanderAction, MoveTimeAction, \
+    CollisionBackupAction, TurnLeftToClearAction, Threshold
 from behavior.action_sequence import EventPause, EventResume, EventFinish, EventCollide, EventFront, \
     EventQueue, ActionSequence
 from behavior.world import World
@@ -99,7 +100,7 @@ class TetheredDriveApp(Tk):
             "M": KeyAction("Toggle Sensor Mode light/bump (default light sensors)", self.toggle_sensor_types, None),
             "N": KeyAction("Toggle Cancel move or Pause move (cancel default)", self.toggle_pause_cancel, None),
             "G": KeyAction("Begin Endless Forward Movement", self.move_endless, None),
-            "T": KeyAction("Begin Target Movement (distance=1 meter)", self.move_distance, None, press_arg=1000),
+            "T": KeyAction("Begin Target Movement (distance=1 meter)", self.move_distance, None, press_arg=3000),
             "W": KeyAction("Pause Movement and Wait", self.move_pause, None),
             "H": KeyAction("Halt and Cancel Movement", self.move_halt, None),
             "PERIOD": KeyAction("Wall Follow", self.wall_follow, None),
@@ -503,7 +504,10 @@ class TetheredDriveApp(Tk):
         is encountered, and halting when it reaches it or the halt event is produced.
         :param dist_in_mm: distance to move in millimeters
         """
-        t = (dist_in_mm * 1000) / 200
+        # 1 m 1.09%
+        # 2 m       75.8 in
+        # 3 m       113.5in
+        t = (dist_in_mm*1000*1.11) / 200
         self.actions.append([MoveTimeAction(self.world, 200, 200, t)])
 
     @rr
@@ -516,10 +520,11 @@ class TetheredDriveApp(Tk):
         :return:
         """
         print("Beginning Wall Follow. H to stop")
-        self.actions.append([
+        self.actions.append([   CollisionBackupAction(self.world, 50, 1500),
                                 WanderAction(self.world, 200, 200),
-                                TurnRightToClearAction(self.world, 80),
-                                WallFollowAction(self.world, 70)
+                                #TurnRightToClearAction(self.world, 80),
+                                TurnLeftToClearAction(self.world, 80),
+                                WallFollowAction(self.world, 80)
                              ])
         #self.actions.append([CollisionBackupAction(self.world, 50, 3),
         #                     TurnLeftToClearAction(self.world, 100),
@@ -560,12 +565,12 @@ class TetheredDriveApp(Tk):
         else:
             if sensors.bumps_wheeldrops.bump_left or sensors.bumps_wheeldrops.bump_right:
                 collide = True
+                #self.robot.drive_direct(0, 0)
             #if sensors.light_bumper.center_left \
             #        or sensors.light_bumper.center_right:
-            if sensors.light_bumper_center_right > 300 \
-                    or sensors.light_bumper_center_left > 300 \
-                    or sensors.light_bumper_front_left > 300:
-                print("Collision!!")
+            elif sensors.light_bumper_center_right > Threshold.Follow \
+                    or sensors.light_bumper_center_left > Threshold.Follow \
+                    or sensors.light_bumper_front_left > Threshold.Follow :
                 # print("LIGHT sensors triggered: {}, {}, {}, {}, {}, {}".format(
                 #      sensors.light_bumper_left,
                 #      sensors.light_bumper_right,
