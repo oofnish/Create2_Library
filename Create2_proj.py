@@ -45,6 +45,7 @@ import tkinter.simpledialog
 
 import os, sys, glob  # for listing serial ports
 
+import behavior.action_behaviors
 # Create Library
 import createlib as cl
 from behavior.action_behaviors import TurnRightToClearAction, WallFollowAction, WanderAction, MoveTimeAction, \
@@ -172,7 +173,7 @@ class TetheredDriveApp(Tk):
         self.world = None
 
         # bot behavior controller
-        self.actions = ActionSequence(50)
+        self.actions = ActionSequence(behavior.action_behaviors.POLLING_PERIOD)
         self.bot_events = EventQueue()
         self.actions.register_event(self.bot_events)
         self.manually_paused = False

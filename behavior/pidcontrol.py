@@ -39,22 +39,34 @@ class ErrHistory(object):
 
 
 class PID_Control:
-    def __init__(self, kp, ki, kd):
+    def __init__(self, kp, ki, kd, dt):
         self.kp = kp
         self.ki = ki
         self.kd = kd
+        self.dt = dt
         self.past = ErrHistory(10)
 
-    def PID(self, error):
+    def PID(self, error, dt):
         p = self.kp * error
-        if len(self.past) > 0:
-            i = self.ki * (sum(self.past) / len(self.past))
-        else:
-            i = 0
+
         if len(self.past) > 1:
-            d = self.kd * (error - self.past[-1])
+            d = self.kd * (error - self.past[-1]) / dt
         else:
             d = 0
+
+        # Add the latest entry into the history list before calculating the integral sum over the whole list
         self.past.add(error)
+        i = self.ki * sum([e*dt for e in self.past])
+
+        # p = self.kp * error
+        # if len(self.past) > 0:
+        #     i = self.ki * (sum(self.past) / len(self.past))
+        # else:
+        #     i = 0
+        # if len(self.past) > 1:
+        #     d = self.kd * (error - self.past[-1])
+        # else:
+        #     d = 0
+        #self.past.add(error)
 
         return p + i + d

@@ -3,6 +3,7 @@ import os
 from behavior.action_sequence import EVENT_TYPE, UPDATE_RESULT
 from behavior.pidcontrol import PID_Control
 
+POLLING_PERIOD = 50
 
 class Threshold:
     """
@@ -247,11 +248,11 @@ class WallFollowAction(Action):
         self.rvel = baseVel
         self.lvel = baseVel
         self.world = worldref
-        self.controller = PID_Control(6, .1, 30)
+        self.controller = PID_Control(6, .1, 30, POLLING_PERIOD)
         self.moving = False
-        self.readings = [0]*200000
-        self.ctl = [0]*200000
-        self.nreadings = 0
+        #self.readings = [0]*200000
+        #self.ctl = [0]*200000
+        #self.nreadings = 0
 
     def begin(self):
         pass
@@ -263,11 +264,11 @@ class WallFollowAction(Action):
 
     def deactivate(self):
         super().deactivate()
-        self.readings = self.readings[:self.nreadings]
-        with open('readings.txt', 'w') as file:
-            file.write('\n'.join([str(r) for r in self.readings]))
-        with open('ctl.txt', 'w') as file2:
-            file2.write('\n'.join([str(r) for r in self.ctl]))
+        #self.readings = self.readings[:self.nreadings]
+        #with open('readings.txt', 'w') as file:
+        #    file.write('\n'.join([str(r) for r in self.readings]))
+        #with open('ctl.txt', 'w') as file2:
+        #    file2.write('\n'.join([str(r) for r in self.ctl]))
         self._stop_motion()
 
     def _start_motion(self):
