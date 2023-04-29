@@ -533,6 +533,8 @@ class TetheredDriveApp(Tk):
         #                     WallFollowAction(self.world, 300)
         #                     ])
 
+    
+
     @rr
     def move_halt(self):
         """

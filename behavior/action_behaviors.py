@@ -12,6 +12,7 @@ class Threshold:
     Clear = 15      # Clear threshold -- the maximum reading that we consider to be a zero value when looking for zero
     Found = 50      # Found threshold -- the minimum reading that we consider to be a nonzero value when looking for it
     Follow = 300    # Threshold for wall following distance
+    # ForceField = ?
 
 
 class Action:
@@ -336,6 +337,117 @@ class WallFollowAction(Action):
             case _:
                 result = UPDATE_RESULT.PASS
         return result
+
+
+class DockingAction(Action):
+    """
+    Class to assist with docking the robot after detecting the
+    docking station during a wall follow.
+
+    Infared Character Values for Roomba Discover Drive-on Charger
+    242 Force Field
+    248 Red Buoy
+    250 Red Buoy and Force Field
+    252 Red Buoy and Green Buoy
+    254 Red Buoy, Green Buoy, and Force Field
+    246 Green Buoy and Force Field
+    244 Green Buoy 
+
+    Roomba 600 Drive-on Charger
+    161 Force Field
+    168 Red Buoy
+    169 Red Buoy and Force Field
+    172 Red Buoy and Green Buoy
+    173 Red Buoy, Greeen Buoy, and Force Field
+    165 Green Buoy and Force Field
+    164 Green Buoy
+    """
+
+    def __init__(self, worldref, baseVel):
+        super().__init__()
+        self.basevel = baseVel
+        self.rvel = baseVel
+        self.lvel = baseVel
+        self.world = worldref
+        self.dock_controller = PID_Control(6, .1, 0, POLLING_PERIOD)
+        self.moving = False
+
+    
+    def begin(self):
+        pass
+
+    def activate(self):
+        print("Activating Docking")
+        super().activate()
+        self._start_motion()
+
+    def deactivate(self):
+        super().deactivate()
+        #self.readings = self.readings[:self.nreadings]
+        #with open('readings.txt', 'w') as file:
+        #    file.write('\n'.join([str(r) for r in self.readings]))
+        #with open('ctl.txt', 'w') as file2:
+        #    file2.write('\n'.join([str(r) for r in self.ctl]))
+        self._stop_motion()
+
+    def _start_motion(self):
+        # send command to start robot with configured velocities
+        self.world.update_wheel_velocities(self.rvel, self.lvel)
+        self.moving = True
+
+    def _stop_motion(self):
+        # send command to stop robot
+        self.world.update_wheel_velocities(0, 0)
+        self.moving = False
+
+
+    def _time_elapsed(self, time):
+        sensors = self.world.sense()
+
+
+        # determine opcode error
+        op_code = sensors.ir_opcode
+        if op_code == ("242" or "161"):
+            # force field
+            error = -10000
+        elif op_code == ("248" or "168"):
+            # red buoy
+            error = 1
+        elif op_code == ("250" or "169"):
+            # red buoy and force field
+            error = 2
+        elif op_code == ("252" or "172"):
+            # red buoy and green buoy
+            error = 0
+        elif op_code == ("254" or "173"):
+            # red buoy, green buoy, force field
+            error = 0
+        elif op_code == ("246" or "165"):
+            # green buoy and force field
+            error = -2
+        elif op_code == ("244" or "164"):
+            # green buoy
+            error = -1
+        else: 
+            # if no value is found, robot needs to go back to wander
+            error = 10000
+
+    # use left ir sensor to detect docking station when wall following with
+    # red buoy and force field?
+        u = self.dock_controller.PID(Threshold.Follow - error)
+
+        dev = int(u)
+
+        self.ctl[self.nreadings] = u
+        self.readings[self.nreadings] = op_code
+        self.nreadings += 1
+
+        dev = max(min(dev, 50), -50)
+        self.rvel = self.basevel + dev
+        self.lvel = self.basevel - dev
+        self._start_motion()
+
+        return UPDATE_RESULT.OK
 
 
 class WanderAction(Action):

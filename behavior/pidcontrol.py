@@ -50,9 +50,10 @@ class PID_Control:
         p = self.kp * error
 
         if len(self.past) > 1:
+            # bad index ########################################################################
             d = self.kd * (error - self.past[-1]) / dt
         else:
-            d = 0
+            d = self.kd * (error - self.past[len(self.past) - 1]) / dt
 
         # Add the latest entry into the history list before calculating the integral sum over the whole list
         self.past.add(error)
@@ -70,3 +71,6 @@ class PID_Control:
         #self.past.add(error)
 
         return p + i + d
+
+
+
