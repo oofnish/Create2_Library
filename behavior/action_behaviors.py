@@ -248,7 +248,10 @@ class WallFollowAction(Action):
         self.rvel = baseVel
         self.lvel = baseVel
         self.world = worldref
-        self.controller = PID_Control(6, .1, 30, POLLING_PERIOD)
+        # self.controller = PID_Control(6, .1, 30, POLLING_PERIOD)
+
+        self.controller = PID_Control(.1, 0, 0, POLLING_PERIOD)
+        self.last_ff = False
         self.moving = False
         #self.readings = [0]*200000
         #self.ctl = [0]*200000
@@ -259,6 +262,242 @@ class WallFollowAction(Action):
 
     def activate(self):
         print("Activating Wall Follow")
+        super().activate()
+        self._start_motion()
+
+    def deactivate(self):
+        super().deactivate()
+        #self.readings = self.readings[:self.nreadings]
+        #    file.write('\n'.join([str(r) for r in self.readings]))
+        #with open('readings.txt', 'w') as file:
+        #with open('ctl.txt', 'w') as file2:
+        #    file2.write('\n'.join([str(r) for r in self.ctl]))
+        self._stop_motion()
+
+    def _start_motion(self):
+        # send command to start robot with configured velocities
+        self.world.update_wheel_velocities(self.rvel, self.lvel)
+        self.moving = True
+
+    def _stop_motion(self):
+        # send command to stop robot
+        self.world.update_wheel_velocities(0, 0)
+        self.moving = False
+
+    def _time_elapsed(self, time):
+        sensors = self.world.sense()
+
+        if sensors.ir_opcode > 160 or sensors.ir_opcode_right > 160:
+            if self.last_ff:
+                print("Force Field o:{} r{}", sensors.ir_opcode, sensors.ir_opcode_right)
+                self.deactivate()
+                return UPDATE_RESULT.DONE
+            else:
+                print("first field found")
+                self.last_ff = True
+        else:
+            self.last_ff = False
+
+        u = self.controller.PID(Threshold.Follow - sensors.light_bumper_right)
+
+        # HACK: bumper right == 0 causes too large a turn, so a crash happens... but we want it higher than normal
+        # omega cap to make turns tight enough.  Robustify this
+        # if sensors.light_bumper_right == 0:
+        #     self.rvel = self.basevel + 70  # dev
+        #     self.lvel = self.basevel - 70  # dev
+        #     self._start_motion()
+
+        dev = int(u)
+
+        #self.ctl[self.nreadings] = u
+        #self.readings[self.nreadings] = sensors.light_bumper_right
+        #self.nreadings += 1
+
+        print("dev {}".format(dev))
+        dev = max(min(dev, 50), -50)
+        self.rvel = self.basevel + dev
+        self.lvel = self.basevel - dev
+        self._start_motion()
+
+        # # ugly logic
+        # elif u > 0:
+        #     dev = int(u)
+        #     if dev > 50:
+        #         dev = 50
+        #     #dev=20
+        #     self.rvel = self.basevel + dev
+        #     self.lvel = self.basevel - dev
+        #     self._start_motion()
+        # elif u < 0:
+        #     dev = int(u)
+        #     if dev < -50:
+        #         dev = -50
+        #     #dev=-20
+        #     self.rvel = self.basevel + dev
+        #     self.lvel = self.basevel - dev
+        #     self._start_motion()
+        #
+        return UPDATE_RESULT.OK
+
+    def update(self, evt):
+        result = UPDATE_RESULT.OK
+        match evt.type:
+            case EVENT_TYPE.FINISH:
+                self.deactivate()
+                result= UPDATE_RESULT.DONE
+            case EVENT_TYPE.TIMER:
+                if not self.moving:
+                    self.activate()
+                result = self._time_elapsed(evt.data)
+            case _:
+                result = UPDATE_RESULT.PASS
+        return result
+
+
+class DockingAction(Action):
+    """
+    Class to assist with docking the robot after detecting the
+    docking station during a wall follow.
+
+    Infared Character Values for Roomba Discover Drive-on Charger
+    242 Force Field
+    248 Red Buoy
+    250 Red Buoy and Force Field
+    252 Red Buoy and Green Buoy
+    254 Red Buoy, Green Buoy, and Force Field
+    246 Green Buoy and Force Field
+    244 Green Buoy
+
+    Roomba 600 Drive-on Charger
+    161 Force Field
+    168 Red Buoy
+    169 Red Buoy and Force Field
+    172 Red Buoy and Green Buoy
+    173 Red Buoy, Greeen Buoy, and Force Field
+    165 Green Buoy and Force Field
+    164 Green Buoy
+    """
+
+    def __init__(self, worldref, baseVel):
+        super().__init__()
+        self.basevel = baseVel
+        self.rvel = baseVel
+        self.lvel = baseVel
+        self.world = worldref
+        self.dock_controller = PID_Control(100, 0, 0, POLLING_PERIOD)
+        self.moving = False
+
+
+    def begin(self):
+        pass
+
+    def activate(self):
+        print("Activating Docking")
+        super().activate()
+        self._start_motion()
+
+    def deactivate(self):
+        super().deactivate()
+        self._stop_motion()
+
+    def _start_motion(self):
+        # send command to start robot with configured velocities
+        self.world.update_wheel_velocities(self.rvel, self.lvel)
+        self.moving = True
+
+    def _stop_motion(self):
+        # send command to stop robot
+        self.world.update_wheel_velocities(0, 0)
+        self.moving = False
+
+    def _time_elapsed(self, time):
+        sensors = self.world.sense()
+
+        BIT_FF = 0x1
+        BIT_GREEN = 0x4
+        BIT_RED = 0x8
+
+
+        error = 0
+        #if sensors.ir_opcode_left & BIT_GREEN:
+        #    error = error - 1
+        if sensors.ir_opcode_left & BIT_RED:
+            error = error + 2
+        #if sensors.ir_opcode_right & BIT_RED:
+        #    error = error + 1
+        if sensors.ir_opcode_right & BIT_GREEN:
+            error = error - 2
+
+        # use left ir sensor to detect docking station when wall following with
+        # red buoy and force field?
+        u = self.dock_controller.PID(0 - error)
+
+        dev = 5*int(u)
+
+        dev = max(min(dev, 50), -50)
+        print(dev)
+        self.rvel = self.basevel + dev
+        self.lvel = self.basevel - dev
+        self._start_motion()
+
+        return UPDATE_RESULT.OK
+
+    def update(self, evt):
+        result = UPDATE_RESULT.OK
+        match evt.type:
+            case EVENT_TYPE.FINISH:
+                self.deactivate()
+                result= UPDATE_RESULT.DONE
+            case EVENT_TYPE.TIMER:
+                if not self.moving:
+                    self.activate()
+                result = self._time_elapsed(evt.data)
+            case _:
+                result = UPDATE_RESULT.PASS
+        return result
+
+
+class MoveToDocking(Action):
+    """
+    Class to assist with docking the robot after detecting the
+    docking station during a wall follow.
+
+    Infared Character Values for Roomba Discover Drive-on Charger
+    242 Force Field
+    248 Red Buoy
+    250 Red Buoy and Force Field
+    252 Red Buoy and Green Buoy
+    254 Red Buoy, Green Buoy, and Force Field
+    246 Green Buoy and Force Field
+    244 Green Buoy
+
+    Roomba 600 Drive-on Charger
+    161 Force Field
+    168 Red Buoy
+    169 Red Buoy and Force Field
+    172 Red Buoy and Green Buoy
+    173 Red Buoy, Greeen Buoy, and Force Field
+    165 Green Buoy and Force Field
+    164 Green Buoy
+    """
+
+    def __init__(self, worldref, baseVel):
+        super().__init__()
+        self.basevel = baseVel
+        self.rvel = baseVel
+        self.lvel = baseVel
+        self.world = worldref
+        self.dock_controller = PID_Control(2, 0, 0, POLLING_PERIOD)
+        self.moving = False
+
+        self.turn_toward_dock = False
+
+    def begin(self):
+        pass
+
+    def activate(self):
+        print("Moving Toward Dock")
+        self.turn_toward_dock = False
         super().activate()
         self._start_motion()
 
@@ -283,44 +522,84 @@ class WallFollowAction(Action):
 
     def _time_elapsed(self, time):
         sensors = self.world.sense()
-        u = self.controller.PID(Threshold.Follow - sensors.light_bumper_right)
 
-        # HACK: bumper right == 0 causes too large a turn, so a crash happens... but we want it higher than normal
-        # omega cap to make turns tight enough.  Robustify this
-        # if sensors.light_bumper_right == 0:
-        #     self.rvel = self.basevel + 70  # dev
-        #     self.lvel = self.basevel - 70  # dev
-        #     self._start_motion()
+
+        # determine opcode error
+        op_code = sensors.ir_opcode
+        #if op_code == ("242" or "161"):
+        #    # force field
+        #    error = -10000
+        if op_code == 168: # ("248" or "168"):
+            # red buoy
+            error = 2
+        elif op_code == 169: #("250" or "169"):
+            # red buoy and force field
+            error = 1
+        elif op_code == 172: #("252" or "172"):
+            # red buoy and green buoy
+            error = 0
+        elif op_code == 173: #("254" or "173"):
+            # red buoy, green buoy, force field
+            error = 0
+        elif op_code == 165: #("246" or "165"):
+            # green buoy and force field
+            error = -2
+        elif op_code == 164: #("244" or "164"):
+            # green buoy
+            error = -1
+        else:
+            # if no value is found, robot needs to go back to wander
+            error = 10000
+
+        BIT_FF = 0x1
+        BIT_GREEN = 0x4
+        BIT_RED = 0x8
+
+        # if sensors.ir_opcode_right > 161:
+        #     print("saw value {}".format(sensors.ir_opcode_left))
+        #     self.deactivate()
+        #     return UPDATE_RESULT.DONE
+
+        if not self.turn_toward_dock:
+            if sensors.ir_opcode & BIT_GREEN and sensors.ir_opcode & BIT_RED == 0:
+                print("omni saw value {}".format(sensors.ir_opcode))
+                self.turn_toward_dock = True
+        elif sensors.ir_opcode & BIT_RED != 0:
+                print("omni saw value {}".format(sensors.ir_opcode))
+                self.turn_toward_dock = False
+                self.deactivate()
+                return UPDATE_RESULT.DONE
+
+        error = 0
+        if sensors.ir_opcode_left & BIT_GREEN:
+            error = error - 1
+        if sensors.ir_opcode_left & BIT_RED:
+            error = error + 2
+        if sensors.ir_opcode_right & BIT_RED:
+            error = error + 1
+        if sensors.ir_opcode_right & BIT_GREEN:
+            error = error - 2
+
+        # use left ir sensor to detect docking station when wall following with
+        # red buoy and force field?
+        u = self.dock_controller.PID(0 - error)
 
         dev = int(u)
 
-        self.ctl[self.nreadings] = u
-        self.readings[self.nreadings] = sensors.light_bumper_right
-        self.nreadings += 1
-
+        #self.ctl[self.nreadings] = u
+        #self.readings[self.nreadings] = op_code
+        #self.nreadings += 1
+#
         dev = max(min(dev, 50), -50)
-        self.rvel = self.basevel + dev
-        self.lvel = self.basevel - dev
-        self._start_motion()
+        if not self.turn_toward_dock:
+            self.rvel = self.basevel + dev
+            self.lvel = self.basevel - dev
+            self._start_motion()
+        else:
+            self.rvel = self.basevel + dev
+            self.lvel = -self.basevel - dev
+            self._start_motion()
 
-        # # ugly logic
-        # elif u > 0:
-        #     dev = int(u)
-        #     if dev > 50:
-        #         dev = 50
-        #     #dev=20
-        #     self.rvel = self.basevel + dev
-        #     self.lvel = self.basevel - dev
-        #     self._start_motion()
-        # elif u < 0:
-        #     dev = int(u)
-        #     if dev < -50:
-        #         dev = -50
-        #     #dev=-20
-        #     self.rvel = self.basevel + dev
-        #     self.lvel = self.basevel - dev
-        #     self._start_motion()
-        #
         return UPDATE_RESULT.OK
 
     def update(self, evt):

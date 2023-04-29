@@ -46,17 +46,17 @@ class PID_Control:
         self.dt = dt
         self.past = ErrHistory(10)
 
-    def PID(self, error, dt):
+    def PID(self, error):
         p = self.kp * error
 
         if len(self.past) > 1:
-            d = self.kd * (error - self.past[-1]) / dt
+            d = self.kd * (error - self.past[-1]) / self.dt
         else:
             d = 0
 
         # Add the latest entry into the history list before calculating the integral sum over the whole list
         self.past.add(error)
-        i = self.ki * sum([e*dt for e in self.past])
+        i = self.ki * sum([e*self.dt for e in self.past])
 
         # p = self.kp * error
         # if len(self.past) > 0:

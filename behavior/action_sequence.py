@@ -185,6 +185,7 @@ class ActionSequence(threading.Thread):
                             print("UNDEFINED RESULT!")
             # check our flag; if any of the events resulted in the action reaching completion, we want to go to the next
             if start_next_action:
+                print("Starting Next Action")
                 self.current_action += 1
                 if len(self.action_sets) > self.current_action:
                     self.next_action.put(EventBeginAction())

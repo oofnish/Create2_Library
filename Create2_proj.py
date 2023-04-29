@@ -49,7 +49,7 @@ import behavior.action_behaviors
 # Create Library
 import createlib as cl
 from behavior.action_behaviors import TurnRightToClearAction, WallFollowAction, WanderAction, MoveTimeAction, \
-    CollisionBackupAction, TurnLeftToClearAction, Threshold
+    CollisionBackupAction, DockingAction, MoveToDocking, TurnLeftToClearAction, Threshold
 from behavior.action_sequence import EventPause, EventResume, EventFinish, EventCollide, EventFront, \
     EventQueue, ActionSequence
 from behavior.world import World
@@ -105,6 +105,7 @@ class TetheredDriveApp(Tk):
             "W": KeyAction("Pause Movement and Wait", self.move_pause, None),
             "H": KeyAction("Halt and Cancel Movement", self.move_halt, None),
             "PERIOD": KeyAction("Wall Follow", self.wall_follow, None),
+            "COMMA": KeyAction("FindDock", self.find_dock, None),
 
             # The following actions are virtual, 'pretty output' items that do not correspond directly to actions, but
             # stand in for action groups or provide prettier name aliases
@@ -407,7 +408,7 @@ class TetheredDriveApp(Tk):
 
     @rr
     def query_light_sensors(self):
-        sensors = self.world.sense()
+        sensors = self.world.sense(refresh=True)
         print([
             sensors.light_bumper_right,
             sensors.light_bumper_front_right,
@@ -420,12 +421,12 @@ class TetheredDriveApp(Tk):
             sensors.light_bumper.center_right,
             sensors.light_bumper.center_left,
             sensors.light_bumper.front_left,
-            sensors.light_bumper.left]
+            sensors.light_bumper.left], [sensors.ir_opcode_left, sensors.ir_opcode_right, sensors.ir_opcode]
         )
 
     @rr
     def query_wall_cliff_signals(self):
-        sensors = self.world.sense()
+        sensors = self.world.sense(refresh=True)
         message = "Wall Signal: {}\n\nCliff Left Signal: {}\n\nCliff Front Left Signal: {}\n\nCliff Front Right Signal: {}\n\nCliff Right Signal: {}".format(
             sensors.wall_signal,
             sensors.cliff_left_signal,
@@ -438,7 +439,7 @@ class TetheredDriveApp(Tk):
 
     @rr
     def query_group_3(self):
-        sensors = self.world.sense()
+        sensors = self.world.sense(refresh=True)
 
         message = "Charging State: {}\n\nVoltage: {} mV\n\nCurrent: {} mA\n\nTemperature: {} C\n\nBattery Charge: {} mAh\n\nBattery Capacity: {} mAh".format(
             ["Not charging", "Reconditioning Charging", "Full Charging",
@@ -510,6 +511,28 @@ class TetheredDriveApp(Tk):
         # 3 m       113.5in
         t = (dist_in_mm*1000*1.11) / 200
         self.actions.append([MoveTimeAction(self.world, 200, 200, t)])
+
+    @rr
+    @need_sensors
+    def find_dock(self):
+        print("Trying to find dock. H to stop")
+        self.actions.append([   CollisionBackupAction(self.world, 50, 1500),
+                                WanderAction(self.world, 200, 200),
+                                #TurnRightToClearAction(self.world, 80),
+                                TurnLeftToClearAction(self.world, 80),
+                                WallFollowAction(self.world, 80)
+                                ])
+        self.actions.append([CollisionBackupAction(self.world, 50, 1500),
+                             MoveTimeAction(self.world, -100, 100, 600)
+                             #DockingAction(self.world, 50)
+                             ])
+        self.actions.append([CollisionBackupAction(self.world, 50, 1500),
+                             MoveToDocking(self.world, 50)
+                             #DockingAction(self.world, 50)
+                             ])
+        self.actions.append([CollisionBackupAction(self.world, 50, 1500),
+                             DockingAction(self.world, 50)
+                             ])
 
     @rr
     @need_sensors
