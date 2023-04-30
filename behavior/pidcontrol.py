@@ -39,17 +39,18 @@ class ErrHistory(object):
 
 
 class PID_Control:
-    def __init__(self, kp, ki, kd, dt):
+    def __init__(self, kp, ki, kd, dt, history=10):
         self.kp = kp
         self.ki = ki
         self.kd = kd
         self.dt = dt
-        self.past = ErrHistory(10)
+        self.past = ErrHistory(history)
 
     def PID(self, error):
         p = self.kp * error
 
         if len(self.past) > 1:
+
             d = self.kd * (error - self.past[-1]) / self.dt
         else:
             d = 0

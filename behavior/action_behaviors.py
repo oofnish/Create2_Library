@@ -2,6 +2,7 @@ import os
 
 from behavior.action_sequence import EVENT_TYPE, UPDATE_RESULT
 from behavior.pidcontrol import PID_Control
+from createlib.create_oi import *
 
 POLLING_PERIOD = 50
 
@@ -44,6 +45,7 @@ class CollisionBackupAction(Action):
         self.vel = vel
         self.total_t = t
         self.elapsed_t = 0
+        self.delaying = False
 
     def begin(self):
         pass
@@ -52,15 +54,14 @@ class CollisionBackupAction(Action):
         print("Activating Collision Backup")
         super().activate()
         self.elapsed_t = 0
-        self._start_motion()
+        self.delaying = True
+        self._stop_motion()
 
     def deactivate(self):
         super().deactivate()
-        print("why deactivate")
         self._stop_motion()
 
     def _start_motion(self):
-        print("Starting motion")
         # send command to start robot with configured velocities
         self.world.update_wheel_velocities(-self.vel, -self.vel)
 
@@ -72,6 +73,12 @@ class CollisionBackupAction(Action):
         if not self.active:
             return UPDATE_RESULT.PASS
         self.elapsed_t += time
+        if self.delaying and self.elapsed_t > 2000:
+            self.delaying = False
+            self._start_motion()
+        elif self.delaying:
+            return UPDATE_RESULT.BREAK
+
         if 0 < self.total_t <= self.elapsed_t:
             self.deactivate()
             return UPDATE_RESULT.OK
@@ -80,16 +87,19 @@ class CollisionBackupAction(Action):
         return UPDATE_RESULT.BREAK
 
     def update(self, evt):
+        sensors = self.world.sense()
+        if sensors.charger_state == CHARGE_SOURCE.HOME_BASE:
+            print("CHARGING (Collision)")
+            self.deactivate()
+            return UPDATE_RESULT.OK
         result = UPDATE_RESULT.OK
         match evt.type:
             case EVENT_TYPE.COLLIDE:
                 if not self.active:
-                    print("why am I active")
                     self.active = True
                     self.activate()
                 result = UPDATE_RESULT.BREAK
             case EVENT_TYPE.FINISH:
-                print("finish here")
                 self.deactivate()
                 result = UPDATE_RESULT.DONE
             case EVENT_TYPE.TIMER:
@@ -124,6 +134,7 @@ class TurnLeftToClearAction(Action):
 
     def deactivate(self):
         super().deactivate()
+        print("Deactivating turn left")
         self._stop_motion()
 
     def _start_motion(self):
@@ -154,7 +165,8 @@ class TurnLeftToClearAction(Action):
         result = UPDATE_RESULT.OK
         match evt.type:
             case EVENT_TYPE.FRONT:
-                self.activate()
+                if not self.active:
+                    self.activate()
                 result = UPDATE_RESULT.BREAK
             case EVENT_TYPE.FINISH:
                 self.deactivate()
@@ -162,7 +174,10 @@ class TurnLeftToClearAction(Action):
             case EVENT_TYPE.TIMER:
                 result = self._time_elapsed()
             case _:
-                result = UPDATE_RESULT.PASS
+                if self.active:
+                    result = UPDATE_RESULT.BREAK
+                else:
+                    result = UPDATE_RESULT.PASS
         return result
 
 
@@ -196,7 +211,6 @@ class TurnRightToClearAction(Action):
     def _start_motion(self):
         # send command to start robot with configured velocities
         self.lostright = False
-        print("RIGHT START")
         self._stop_motion()
         self.world.update_wheel_velocities(self.vel, -self.vel)
 
@@ -248,14 +262,10 @@ class WallFollowAction(Action):
         self.rvel = baseVel
         self.lvel = baseVel
         self.world = worldref
-        # self.controller = PID_Control(6, .1, 30, POLLING_PERIOD)
 
-        self.controller = PID_Control(.1, 0, 0, POLLING_PERIOD)
+        self.controller = PID_Control(.1, 0.00004, .5, POLLING_PERIOD, 15)
         self.last_ff = False
         self.moving = False
-        #self.readings = [0]*200000
-        #self.ctl = [0]*200000
-        #self.nreadings = 0
 
     def begin(self):
         pass
@@ -267,11 +277,6 @@ class WallFollowAction(Action):
 
     def deactivate(self):
         super().deactivate()
-        #self.readings = self.readings[:self.nreadings]
-        #    file.write('\n'.join([str(r) for r in self.readings]))
-        #with open('readings.txt', 'w') as file:
-        #with open('ctl.txt', 'w') as file2:
-        #    file2.write('\n'.join([str(r) for r in self.ctl]))
         self._stop_motion()
 
     def _start_motion(self):
@@ -289,54 +294,22 @@ class WallFollowAction(Action):
 
         if sensors.ir_opcode > 160 or sensors.ir_opcode_right > 160:
             if self.last_ff:
-                print("Force Field o:{} r{}", sensors.ir_opcode, sensors.ir_opcode_right)
                 self.deactivate()
                 return UPDATE_RESULT.DONE
             else:
-                print("first field found")
                 self.last_ff = True
         else:
             self.last_ff = False
 
         u = self.controller.PID(Threshold.Follow - sensors.light_bumper_right)
 
-        # HACK: bumper right == 0 causes too large a turn, so a crash happens... but we want it higher than normal
-        # omega cap to make turns tight enough.  Robustify this
-        # if sensors.light_bumper_right == 0:
-        #     self.rvel = self.basevel + 70  # dev
-        #     self.lvel = self.basevel - 70  # dev
-        #     self._start_motion()
-
         dev = int(u)
 
-        #self.ctl[self.nreadings] = u
-        #self.readings[self.nreadings] = sensors.light_bumper_right
-        #self.nreadings += 1
-
-        print("dev {}".format(dev))
-        dev = max(min(dev, 50), -50)
+        dev = max(min(dev, 100), -100)
         self.rvel = self.basevel + dev
         self.lvel = self.basevel - dev
         self._start_motion()
 
-        # # ugly logic
-        # elif u > 0:
-        #     dev = int(u)
-        #     if dev > 50:
-        #         dev = 50
-        #     #dev=20
-        #     self.rvel = self.basevel + dev
-        #     self.lvel = self.basevel - dev
-        #     self._start_motion()
-        # elif u < 0:
-        #     dev = int(u)
-        #     if dev < -50:
-        #         dev = -50
-        #     #dev=-20
-        #     self.rvel = self.basevel + dev
-        #     self.lvel = self.basevel - dev
-        #     self._start_motion()
-        #
         return UPDATE_RESULT.OK
 
     def update(self, evt):
@@ -384,7 +357,7 @@ class DockingAction(Action):
         self.rvel = baseVel
         self.lvel = baseVel
         self.world = worldref
-        self.dock_controller = PID_Control(100, 0, 0, POLLING_PERIOD)
+        self.dock_controller = PID_Control(.4, .01, .5, POLLING_PERIOD)
         self.moving = False
 
 
@@ -413,29 +386,45 @@ class DockingAction(Action):
     def _time_elapsed(self, time):
         sensors = self.world.sense()
 
+        if sensors.charger_state == CHARGING_STATE.CHARGING_FAULT:
+            print("CHARGING FAULT")
+
+        if sensors.charger_state > CHARGING_STATE.NOT_CHARGING:
+            print("CHARGING {}".format(sensors.charger_state))
+            self.deactivate()
+            return UPDATE_RESULT.DONE
+
         BIT_FF = 0x1
         BIT_GREEN = 0x4
         BIT_RED = 0x8
 
-
         error = 0
-        #if sensors.ir_opcode_left & BIT_GREEN:
-        #    error = error - 1
+        s = 0
+        if sensors.ir_opcode_left & BIT_GREEN:
+            s = s | 0x1
+            error = error - 1
         if sensors.ir_opcode_left & BIT_RED:
+            s = s | 0x2
             error = error + 2
-        #if sensors.ir_opcode_right & BIT_RED:
-        #    error = error + 1
+        if sensors.ir_opcode_right & BIT_RED:
+            s = s | 0x4
+            error = error + 1
         if sensors.ir_opcode_right & BIT_GREEN:
+            s = s | 0x8
             error = error - 2
+        if sensors.ir_opcode_right == sensors.ir_opcode_left == 0:
+            if sensors.ir_opcode & BIT_GREEN:
+                error = error - 3
+            if sensors.ir_opcode & BIT_RED:
+                error = error + 3
 
         # use left ir sensor to detect docking station when wall following with
         # red buoy and force field?
         u = self.dock_controller.PID(0 - error)
 
-        dev = 5*int(u)
+        dev = 2*int(u)
 
         dev = max(min(dev, 50), -50)
-        print(dev)
         self.rvel = self.basevel + dev
         self.lvel = self.basevel - dev
         self._start_motion()
@@ -461,24 +450,6 @@ class MoveToDocking(Action):
     """
     Class to assist with docking the robot after detecting the
     docking station during a wall follow.
-
-    Infared Character Values for Roomba Discover Drive-on Charger
-    242 Force Field
-    248 Red Buoy
-    250 Red Buoy and Force Field
-    252 Red Buoy and Green Buoy
-    254 Red Buoy, Green Buoy, and Force Field
-    246 Green Buoy and Force Field
-    244 Green Buoy
-
-    Roomba 600 Drive-on Charger
-    161 Force Field
-    168 Red Buoy
-    169 Red Buoy and Force Field
-    172 Red Buoy and Green Buoy
-    173 Red Buoy, Greeen Buoy, and Force Field
-    165 Green Buoy and Force Field
-    164 Green Buoy
     """
 
     def __init__(self, worldref, baseVel):
@@ -503,11 +474,6 @@ class MoveToDocking(Action):
 
     def deactivate(self):
         super().deactivate()
-        #self.readings = self.readings[:self.nreadings]
-        #with open('readings.txt', 'w') as file:
-        #    file.write('\n'.join([str(r) for r in self.readings]))
-        #with open('ctl.txt', 'w') as file2:
-        #    file2.write('\n'.join([str(r) for r in self.ctl]))
         self._stop_motion()
 
     def _start_motion(self):
@@ -523,49 +489,14 @@ class MoveToDocking(Action):
     def _time_elapsed(self, time):
         sensors = self.world.sense()
 
-
-        # determine opcode error
-        op_code = sensors.ir_opcode
-        #if op_code == ("242" or "161"):
-        #    # force field
-        #    error = -10000
-        if op_code == 168: # ("248" or "168"):
-            # red buoy
-            error = 2
-        elif op_code == 169: #("250" or "169"):
-            # red buoy and force field
-            error = 1
-        elif op_code == 172: #("252" or "172"):
-            # red buoy and green buoy
-            error = 0
-        elif op_code == 173: #("254" or "173"):
-            # red buoy, green buoy, force field
-            error = 0
-        elif op_code == 165: #("246" or "165"):
-            # green buoy and force field
-            error = -2
-        elif op_code == 164: #("244" or "164"):
-            # green buoy
-            error = -1
-        else:
-            # if no value is found, robot needs to go back to wander
-            error = 10000
-
         BIT_FF = 0x1
         BIT_GREEN = 0x4
         BIT_RED = 0x8
 
-        # if sensors.ir_opcode_right > 161:
-        #     print("saw value {}".format(sensors.ir_opcode_left))
-        #     self.deactivate()
-        #     return UPDATE_RESULT.DONE
-
         if not self.turn_toward_dock:
             if sensors.ir_opcode & BIT_GREEN and sensors.ir_opcode & BIT_RED == 0:
-                print("omni saw value {}".format(sensors.ir_opcode))
                 self.turn_toward_dock = True
         elif sensors.ir_opcode & BIT_RED != 0:
-                print("omni saw value {}".format(sensors.ir_opcode))
                 self.turn_toward_dock = False
                 self.deactivate()
                 return UPDATE_RESULT.DONE
@@ -585,11 +516,7 @@ class MoveToDocking(Action):
         u = self.dock_controller.PID(0 - error)
 
         dev = int(u)
-
-        #self.ctl[self.nreadings] = u
-        #self.readings[self.nreadings] = op_code
-        #self.nreadings += 1
-#
+ #
         dev = max(min(dev, 50), -50)
         if not self.turn_toward_dock:
             self.rvel = self.basevel + dev
@@ -635,6 +562,8 @@ class WanderAction(Action):
         self._start_motion()
 
     def deactivate(self):
+        if not self.active:
+            return
         super().deactivate()
         self.complete = True
         self._stop_motion()
@@ -674,7 +603,6 @@ class WanderAction(Action):
                 result = UPDATE_RESULT.PASS
         return result
 
-
 class MoveTimeAction(Action):
     def __init__(self, worldref, rvel, lvel, t):
         super().__init__()
@@ -706,26 +634,19 @@ class MoveTimeAction(Action):
     def begin(self):
         # send command to drive robot with the configured wheel velocities
         self._start_motion()
-        print("B", end="")
 
     def update(self, evt):
         result = UPDATE_RESULT.OK
         match evt.type:
             case EVENT_TYPE.FRONT:
                 # halt wheel motion
-                print("P", end="")
                 self.deactivate()
                 self.paused = True
             case EVENT_TYPE.RESUME:
                 # start wheel motion again
                 if self.paused:
-                    print("R", end="")
                     self.activate()
                 self.paused = False
-            case EVENT_TYPE.COLLIDE:
-                print("E {}s {}m".format(self.elapsed_t / 1000, (self.elapsed_t * self.rvel) / (1000 * 1000)), end="")
-                self.deactivate()
-                result = UPDATE_RESULT.DONE
             case EVENT_TYPE.FINISH:
                 self.deactivate()
                 result = UPDATE_RESULT.DONE
@@ -733,13 +654,10 @@ class MoveTimeAction(Action):
                 if not self.paused:
                     self.elapsed_t += evt.data
                     if 0 < self.total_t <= self.elapsed_t:
-                        print("E {}s {}m".format(self.elapsed_t / 1000, (self.elapsed_t * self.rvel) / (1000 * 1000)),
-                              end="")
                         self._stop_motion()
                         result = UPDATE_RESULT.DONE
-                    print(".", end="")
             case _:
-                print("")
+                result = UPDATE_RESULT.PASS
         return result
 
     def cancel(self):

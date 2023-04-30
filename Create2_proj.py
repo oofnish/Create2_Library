@@ -517,7 +517,7 @@ class TetheredDriveApp(Tk):
     def find_dock(self):
         print("Trying to find dock. H to stop")
         self.actions.append([   CollisionBackupAction(self.world, 50, 1500),
-                                WanderAction(self.world, 200, 200),
+                                WanderAction(self.world, 150, 150),
                                 #TurnRightToClearAction(self.world, 80),
                                 TurnLeftToClearAction(self.world, 80),
                                 WallFollowAction(self.world, 80)
@@ -530,8 +530,8 @@ class TetheredDriveApp(Tk):
                              MoveToDocking(self.world, 50)
                              #DockingAction(self.world, 50)
                              ])
-        self.actions.append([CollisionBackupAction(self.world, 50, 1500),
-                             DockingAction(self.world, 50)
+        self.actions.append([CollisionBackupAction(self.world, 50, 3500),
+                             DockingAction(self.world, 30)
                              ])
 
     @rr
@@ -545,7 +545,7 @@ class TetheredDriveApp(Tk):
         """
         print("Beginning Wall Follow. H to stop")
         self.actions.append([   CollisionBackupAction(self.world, 50, 1500),
-                                WanderAction(self.world, 200, 200),
+                                WanderAction(self.world, 150, 150),
                                 #TurnRightToClearAction(self.world, 80),
                                 TurnLeftToClearAction(self.world, 80),
                                 WallFollowAction(self.world, 80)
