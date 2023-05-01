@@ -1,6 +1,8 @@
 import math
 import time
 
+from matplotlib import pyplot as plt
+
 
 class World:
     """
@@ -9,7 +11,7 @@ class World:
     representation with new data
     """
 
-    def __init__(self, robotref, grid_resolution=500, grid_size=101, initial_position=None):
+    def __init__(self, robotref, grid_resolution=406.4, grid_size=21, initial_position=None):
         self.robot = robotref
         # Latest sensor reading, retrieved using GetSensors. This should be considered the "Truth" for sensor data, and
         # should only be refreshed in one place during behaviors
@@ -26,14 +28,20 @@ class World:
         if initial_position is None:
             # default initial position is somewhere in the middle of the occupancy grid.
             initial_position = [grid_resolution * grid_size / 2, grid_resolution * grid_size / 2, 0]
-        self.x = 0  # Current x position +x is forward from robot's initial orientation
-        self.y = 0  # Current y position
-        self.theta = 0  # Current angle w.r.t starting orientation
+        self.x = initial_position[0]  # Current x position +x is forward from robot's initial orientation
+        self.y = initial_position[1]  # Current y position
+        self.theta = initial_position[2]  # Current angle w.r.t starting orientation
 
         # velocity tracking
         self.v_L = 0  # Latest left wheel velocity (linear)
         self.v_R = 0  # Latest Right wheel Velocity (linear)
-        self.last_update_time = time.time_ns()  # Latest wheel velocity update. Velocity is constant for the duration
+        self.last_update_time = time.time()  # Latest wheel velocity update. Velocity is constant for the duration
+
+        # Bias
+        # Adjustments to ideal velocity values for measuring movement
+        self.lbias = 1.13
+        self.rbias = 1.13
+        self.obias = 1.155
 
         # World representation;  occupancy grid with landmarks
         self.landmarks = []
@@ -57,7 +65,7 @@ class World:
         Provide an update to wheel velocities for odometry purposes.
         """
         # get the current time and calculate how much time has passed since the last update
-        current_time = time.time_ns()
+        current_time = time.time()
         dt = current_time - self.last_update_time
 
         # update odometry
@@ -92,15 +100,30 @@ class World:
             r = self.D * (self.v_L + self.v_R) / (2 * (self.v_R - self.v_L))
             d_theta = omega * dt
 
-            self.x += r * (math.sin(self.theta + d_theta) - math.sin(self.theta))
-            self.y += r * (math.cos(self.theta) - math.cos(self.theta + d_theta))
-            self.theta += d_theta
+            self.x = self.x + r * (math.sin(self.theta + d_theta) - math.sin(self.theta))
+            self.y = self.y + r * (math.cos(self.theta) - math.cos(self.theta + d_theta))
+            self.theta = self.theta + d_theta
         else:
             # equal velocities produce a linear-ish position calculation
             # velocity component
             v = (self.v_R + self.v_L) / 2
-            self.x += v * dt * math.cos(self.theta)
-            self.y += v * dt * math.sin(self.theta)
+            self.x = self.x + v * dt * math.cos(self.theta)
+            self.y = self.y + v * dt * math.sin(self.theta)
+
+    def get_move_time_bias(self, dist, vel):
+        bias = self.rbias
+        if self.lbias != self.rbias:
+            bias = (self.rbias+self.lbias) / 2
+        t = (dist*bias/vel) * 1000
+        return t
+
+    def get_rotate_time_bias(self, angle, vel):
+        omega = (2*vel) / self.D
+        bias = self.obias
+        # if self.lbias != self.rbias:
+        #     bias = (self.rbias+self.lbias) / 2
+        t = (angle*bias/omega) * 1000
+        return t
 
     def add_landmark(self, x, y, label):
         """
@@ -113,11 +136,14 @@ class World:
         Updates the occupancy grid based on a given x,y world position. We assume that if the robot can be at the
         position, the space is unoccupied
         """
-        #grid_x = int(x / self.grid_resolution)
-        #grid_y = int(y / self.grid_resolution)
+        grid_x = int(x / self.grid_resolution)
+        grid_y = int(y / self.grid_resolution)
 
-        #self.occupancy_grid[grid_x][grid_y] = 1
-        pass
+        self.occupancy_grid[grid_x][grid_y] = 1
+
+        #if self.update_map:
+        #    plot_robot_position(self)
+        #    self.update_map = False
 
     def get_position(self):
         """
@@ -136,3 +162,43 @@ class World:
         gets the occupancy grid (list of lists)
         """
         return self.occupancy_grid
+
+    def world_vis(self):
+        return plot_robot_position(self)
+
+
+def plot_robot_position(odom, fig=None, ax=None):
+    res = 406.4
+    if fig is None:
+        fig, ax = plt.subplots(figsize=(10, 10))
+        plt.ion()
+        plt.show()
+
+    # Plot occupied grid spaces
+    for cell_y, row in enumerate(odom.occupancy_grid):
+        for cell_x, cell in enumerate(row):
+            if cell > 0:
+                square = plt.Rectangle((cell_y*res, cell_x*res), 1*res, 1*res, edgecolor='gray', facecolor='black', lw=1)
+            else:
+                square = plt.Rectangle((cell_y*res, cell_x*res), 1*res, 1*res, edgecolor='gray', facecolor='none', lw=1)
+            ax.add_patch(square)
+        #cell_x, cell_y = cell
+            #if cell_y == 10:
+            #    ax.add_patch(plt.Rectangle((cell_x*res - 0.5*res, (21-cell_y)*res - 0.5*res), res, res, facecolor='black'))
+
+    # Plot landmarks
+    for landmark in odom.landmarks:
+        ax.scatter(landmark[0], landmark[1], marker='x', color='red')
+
+    # Plot robot position
+    ax.scatter(odom.x, odom.y, marker='o', color='blue')
+    ax.quiver(odom.x, odom.y, 100 * math.cos(odom.theta), 100 * math.sin(odom.theta), color='blue', angles='xy', scale_units='xy', scale=1000)
+
+    ax.set_xlim(0, 21*res)
+    ax.set_ylim(0, 21*res)
+    ax.set_aspect('equal')
+    #ax.set_aspect('equal', adjustable='box')
+    plt.grid(False)
+    plt.xlabel('X')
+    plt.ylabel('Y')
+    return fig, ax

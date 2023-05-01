@@ -1,3 +1,4 @@
+import math
 import os
 
 from behavior.action_sequence import EVENT_TYPE, UPDATE_RESULT
@@ -666,3 +667,125 @@ class MoveTimeAction(Action):
 
     def duration(self):
         return self.total_t
+
+
+class MoveDistanceAction(Action):
+    def __init__(self, worldref, dist, vel=150):
+        super().__init__()
+        self.elapsed_t = 0
+        self.vel = vel
+        self.world = worldref
+        #self.total_t = (dist/vel) * 1000
+        self.total_t = self.world.get_move_time_bias(dist, vel)
+        self.paused = False
+
+    def _start_motion(self):
+        # send command to start robot with configured velocities
+        self.world.update_wheel_velocities(self.vel, self.vel)
+
+    def _stop_motion(self):
+        # send command to stop robot
+        self.world.update_wheel_velocities(0, 0)
+        pass
+
+    def activate(self):
+        print("Activating Move Distance")
+        super().activate()
+        self._start_motion()
+
+    def deactivate(self):
+        super().deactivate()
+        self._stop_motion()
+
+    def begin(self):
+        # send command to drive robot with the configured wheel velocities
+        self._start_motion()
+
+    def update(self, evt):
+        result = UPDATE_RESULT.OK
+        match evt.type:
+            case EVENT_TYPE.FRONT:
+                # halt wheel motion
+                self.deactivate()
+                self.paused = True
+            case EVENT_TYPE.RESUME:
+                # start wheel motion again
+                if self.paused:
+                    self.activate()
+                self.paused = False
+            case EVENT_TYPE.FINISH:
+                self.deactivate()
+                result = UPDATE_RESULT.DONE
+            case EVENT_TYPE.TIMER:
+                if not self.paused:
+                    self.elapsed_t += evt.data
+                    if 0 < self.total_t <= self.elapsed_t:
+                        self._stop_motion()
+                        self.deactivate()
+                        result = UPDATE_RESULT.OK
+                    else:
+                        result = UPDATE_RESULT.BREAK
+            case _:
+                result = UPDATE_RESULT.PASS
+        return result
+
+
+class Rotate90Action(Action):
+    def __init__(self, worldref, direction, vel=150):
+        super().__init__()
+        self.elapsed_t = 0
+        self.vel = vel
+        self.world = worldref
+        self.total_t = self.world.get_rotate_time_bias(math.pi/2, vel)
+        self.dir = direction
+        self.done = False
+
+    def _start_motion(self):
+        # send command to start robot with configured velocities
+        if self.dir == "right":
+            self.world.update_wheel_velocities(self.vel, -self.vel)
+        else:
+            self.world.update_wheel_velocities(-self.vel, self.vel)
+
+    def _stop_motion(self):
+        # send command to stop robot
+        self.world.update_wheel_velocities(0, 0)
+        pass
+
+    def activate(self):
+        print("Activating 90 Degree rotate {}".format(self.dir))
+        super().activate()
+        self._start_motion()
+
+    def deactivate(self):
+        super().deactivate()
+        self.done = True
+        self._stop_motion()
+
+    def begin(self):
+        pass
+        # send command to drive robot with the configured wheel velocities
+        #self._start_motion()
+
+    def update(self, evt):
+        result = UPDATE_RESULT.OK
+        match evt.type:
+            case EVENT_TYPE.FINISH:
+                self.deactivate()
+                result = UPDATE_RESULT.DONE
+            case EVENT_TYPE.TIMER:
+                if self.done:
+                    return UPDATE_RESULT.PASS
+                if not self.active:
+                    self.activate()
+                if self.active:
+                    self.elapsed_t += evt.data
+                    if 0 < self.total_t <= self.elapsed_t:
+                        self._stop_motion()
+                        self.deactivate()
+                        result = UPDATE_RESULT.OK
+                    else:
+                        result = UPDATE_RESULT.BREAK
+            case _:
+                result = UPDATE_RESULT.PASS
+        return result

@@ -48,11 +48,11 @@ import os, sys, glob  # for listing serial ports
 import behavior.action_behaviors
 # Create Library
 import createlib as cl
-from behavior.action_behaviors import TurnRightToClearAction, WallFollowAction, WanderAction, MoveTimeAction, \
-    CollisionBackupAction, DockingAction, MoveToDocking, TurnLeftToClearAction, Threshold
+from behavior.action_behaviors import *
 from behavior.action_sequence import EventPause, EventResume, EventFinish, EventCollide, EventFront, \
     EventQueue, ActionSequence
-from behavior.world import World
+from behavior.world import World, plot_robot_position
+from behavior.mockrobot import MockCreate2
 
 try:
     import serial
@@ -74,6 +74,7 @@ class TetheredDriveApp(Tk):
         """
         self.key_actions = {
             "C": KeyAction("Connect", self.on_connect, None),
+            "M": KeyAction("Mock Mode Connect", self.on_connect, None, press_arg=True),
             "Escape": KeyAction("Quick Shutdown", None, None),
             "ESCAPE": KeyAction("", self.shutdown, None),
         }
@@ -93,6 +94,8 @@ class TetheredDriveApp(Tk):
             "R": KeyAction("Reset", self.direct_command, None, press_arg=self.robot.reset),
             "B": KeyAction("Print Sensors", self.print_sensors, None),
 
+            "I": KeyAction("Display Coverage Map", self.update_map, None),
+
             "L": KeyAction("Query Light Sensors", self.query_light_sensors, None),
             "Z": KeyAction("Query Wall Signal/Cliff Signals", self.query_wall_cliff_signals, None),
             "Y": KeyAction("Query Group Packet ID #3", self.query_group_3, None),
@@ -106,6 +109,7 @@ class TetheredDriveApp(Tk):
             "H": KeyAction("Halt and Cancel Movement", self.move_halt, None),
             "PERIOD": KeyAction("Wall Follow", self.wall_follow, None),
             "COMMA": KeyAction("FindDock", self.find_dock, None),
+            "SEMICOLON": KeyAction("FindDock", self.move_distance2, None),
 
             # The following actions are virtual, 'pretty output' items that do not correspond directly to actions, but
             # stand in for action groups or provide prettier name aliases
@@ -231,26 +235,32 @@ class TetheredDriveApp(Tk):
         if k in self.key_actions:
             self.key_actions[k].release()
 
-    def on_connect(self):
+    def on_connect(self, mock_mode=False):
         if self.robot is not None:
             tkinter.messagebox.showinfo('Oops', "You're already connected to the robot!")
             return
+        if not mock_mode:
+            try:
+                ports = self.get_serial_ports()
+                if len(ports) == 1 and self.auto_connect:
+                    port = ports[0]
+                else:
+                    port = tkinter.simpledialog.askstring('Port?',
+                                                          'Enter COM port to open.\nAvailable options:\n' + '\n'.join(
+                                                              ports))
 
-        try:
-            ports = self.get_serial_ports()
-            if len(ports) == 1 and self.auto_connect:
-                port = ports[0]
-            else:
-                port = tkinter.simpledialog.askstring('Port?',
-                                                      'Enter COM port to open.\nAvailable options:\n' + '\n'.join(
-                                                          ports))
-        except EnvironmentError:
-            port = tkinter.simpledialog.askstring('Port?', 'Enter COM port to open.')
+            except EnvironmentError:
+                port = tkinter.simpledialog.askstring('Port?', 'Enter COM port to open.')
+        else:
+            port = 0
 
         if port is not None:
             print("Trying " + str(port) + "... ")
             try:
-                self.robot = cl.Create2(port=port, baud=115200)
+                if not mock_mode:
+                    self.robot = cl.Create2(port=port, baud=115200)
+                else:
+                    self.robot = MockCreate2(port=port, baud=115200)
                 print("Connected!")
                 # tkinter.messagebox.showinfo('Connected', "Connection succeeded!")
                 self.text.delete("1.0", END)
@@ -356,6 +366,11 @@ class TetheredDriveApp(Tk):
             del self.robot
             self.robot = None
         self.destroy()
+
+    @rr
+    def update_map(self):
+        # self.dash.start()
+        fig, ax = plot_robot_position(self.world)
 
     @rr
     def print_sensors(self):
@@ -555,6 +570,14 @@ class TetheredDriveApp(Tk):
         #                     WanderAction(self.world, 200, 200),
         #                     WallFollowAction(self.world, 300)
         #                     ])
+
+    @rr
+    @need_sensors
+    def move_distance2(self):
+        print("Beginning Move Distance. H to stop")
+        #self.actions.append([MoveDistanceAction(self.world, 406*3, 150)])
+        self.actions.append([Rotate90Action(self.world, "right", 150),
+                             Rotate90Action(self.world, "left", 150)])
 
     @rr
     def move_halt(self):
