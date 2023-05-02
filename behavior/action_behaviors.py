@@ -18,9 +18,17 @@ class Threshold:
 
 class Action:
     active = False
+    is_goal = False
 
-    def __init__(self):
+    def __init__(self, **kwargs):
         self.active = False
+        self.is_goal = False
+        for k, v in kwargs.items():
+            match k:
+                case "start_active":
+                    self.active = True
+                case "is_goal":
+                    self.is_goal = True
 
     def activate(self):
         self.active = True
@@ -38,10 +46,16 @@ class Action:
     def cleanup(self):
         pass
 
+    def ok_or_done(self):
+        if self.is_goal:
+            return UPDATE_RESULT.DONE
+        else:
+            return UPDATE_RESULT.OK
+
 
 class CollisionBackupAction(Action):
-    def __init__(self, worldref, vel, t):
-        super().__init__()
+    def __init__(self, worldref, vel, t, **kwargs):
+        super().__init__(**kwargs)
         self.world = worldref
         self.vel = vel
         self.total_t = t
@@ -83,6 +97,8 @@ class CollisionBackupAction(Action):
         if 0 < self.total_t <= self.elapsed_t:
             self.deactivate()
             return UPDATE_RESULT.OK
+        else:
+            self.world.ping()
 
         # if we're active, and we haven't completed motion, prevent later actions from running
         return UPDATE_RESULT.BREAK
@@ -120,8 +136,8 @@ class TurnLeftToClearAction(Action):
     will clear early, leaving the bot facing around 45 degrees toward the corner.  In many cases, this is not enough to
     clear the corner and the bot will collide with it.
     """
-    def __init__(self, worldref, vel):
-        super().__init__()
+    def __init__(self, worldref, vel, **kwargs):
+        super().__init__(**kwargs)
         self.world = worldref
         self.vel = vel
 
@@ -191,8 +207,8 @@ class TurnRightToClearAction(Action):
     As opposed to TurnLeftToClearAction, this approach to aligning to a wall is much more inefficient, but is more
     robust to cases where the robot is near a corner.
     """
-    def __init__(self, worldref, vel):
-        super().__init__()
+    def __init__(self, worldref, vel, **kwargs):
+        super().__init__(**kwargs)
         self.world = worldref
         self.vel = vel
         self.lostright = False
@@ -257,8 +273,8 @@ class TurnRightToClearAction(Action):
 
 
 class WallFollowAction(Action):
-    def __init__(self, worldref, baseVel):
-        super().__init__()
+    def __init__(self, worldref, baseVel, **kwargs):
+        super().__init__(**kwargs)
         self.basevel = baseVel
         self.rvel = baseVel
         self.lvel = baseVel
@@ -352,8 +368,8 @@ class DockingAction(Action):
     164 Green Buoy
     """
 
-    def __init__(self, worldref, baseVel):
-        super().__init__()
+    def __init__(self, worldref, baseVel, **kwargs):
+        super().__init__(**kwargs)
         self.basevel = baseVel
         self.rvel = baseVel
         self.lvel = baseVel
@@ -453,8 +469,8 @@ class MoveToDocking(Action):
     docking station during a wall follow.
     """
 
-    def __init__(self, worldref, baseVel):
-        super().__init__()
+    def __init__(self, worldref, baseVel, **kwargs):
+        super().__init__(**kwargs)
         self.basevel = baseVel
         self.rvel = baseVel
         self.lvel = baseVel
@@ -546,8 +562,8 @@ class MoveToDocking(Action):
 
 
 class WanderAction(Action):
-    def __init__(self, worldref, rvel, lvel):
-        super().__init__()
+    def __init__(self, worldref, rvel, lvel, **kwargs):
+        super().__init__(**kwargs)
         self.rvel = rvel
         self.lvel = lvel
         self.world = worldref
@@ -586,6 +602,8 @@ class WanderAction(Action):
         if not self.active:
             self.activate()
 
+        self.world.ping()
+
         return UPDATE_RESULT.BREAK
 
     def update(self, evt):
@@ -604,9 +622,10 @@ class WanderAction(Action):
                 result = UPDATE_RESULT.PASS
         return result
 
+
 class MoveTimeAction(Action):
-    def __init__(self, worldref, rvel, lvel, t):
-        super().__init__()
+    def __init__(self, worldref, rvel, lvel, t, **kwargs):
+        super().__init__(**kwargs)
         self.rvel = rvel
         self.lvel = lvel
         self.total_t = t
@@ -643,6 +662,7 @@ class MoveTimeAction(Action):
                 # halt wheel motion
                 self.deactivate()
                 self.paused = True
+                self.world.mark_occupied_area("front")
             case EVENT_TYPE.RESUME:
                 # start wheel motion again
                 if self.paused:
@@ -656,7 +676,9 @@ class MoveTimeAction(Action):
                     self.elapsed_t += evt.data
                     if 0 < self.total_t <= self.elapsed_t:
                         self._stop_motion()
-                        result = UPDATE_RESULT.DONE
+                        result = self.ok_or_done()
+                    else:
+                        self.world.ping()
             case _:
                 result = UPDATE_RESULT.PASS
         return result
@@ -670,8 +692,8 @@ class MoveTimeAction(Action):
 
 
 class MoveDistanceAction(Action):
-    def __init__(self, worldref, dist, vel=150):
-        super().__init__()
+    def __init__(self, worldref, dist, vel=150, **kwargs):
+        super().__init__(**kwargs)
         self.elapsed_t = 0
         self.vel = vel
         self.world = worldref
@@ -722,8 +744,9 @@ class MoveDistanceAction(Action):
                     if 0 < self.total_t <= self.elapsed_t:
                         self._stop_motion()
                         self.deactivate()
-                        result = UPDATE_RESULT.OK
+                        result = self.ok_or_done()
                     else:
+                        self.world.ping()
                         result = UPDATE_RESULT.BREAK
             case _:
                 result = UPDATE_RESULT.PASS
@@ -731,8 +754,8 @@ class MoveDistanceAction(Action):
 
 
 class Rotate90Action(Action):
-    def __init__(self, worldref, direction, vel=150):
-        super().__init__()
+    def __init__(self, worldref, direction, vel=150, **kwargs):
+        super().__init__(**kwargs)
         self.elapsed_t = 0
         self.vel = vel
         self.world = worldref
@@ -783,7 +806,7 @@ class Rotate90Action(Action):
                     if 0 < self.total_t <= self.elapsed_t:
                         self._stop_motion()
                         self.deactivate()
-                        result = UPDATE_RESULT.OK
+                        result = self.ok_or_done()
                     else:
                         result = UPDATE_RESULT.BREAK
             case _:

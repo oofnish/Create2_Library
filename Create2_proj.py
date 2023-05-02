@@ -94,7 +94,7 @@ class TetheredDriveApp(Tk):
             "R": KeyAction("Reset", self.direct_command, None, press_arg=self.robot.reset),
             "B": KeyAction("Print Sensors", self.print_sensors, None),
 
-            "I": KeyAction("Display Coverage Map", self.update_map, None),
+            "I": KeyAction("Display Coverage Map", self.update_map, None, press_arg=True),
 
             "L": KeyAction("Query Light Sensors", self.query_light_sensors, None),
             "Z": KeyAction("Query Wall Signal/Cliff Signals", self.query_wall_cliff_signals, None),
@@ -109,7 +109,8 @@ class TetheredDriveApp(Tk):
             "H": KeyAction("Halt and Cancel Movement", self.move_halt, None),
             "PERIOD": KeyAction("Wall Follow", self.wall_follow, None),
             "COMMA": KeyAction("FindDock", self.find_dock, None),
-            "SEMICOLON": KeyAction("FindDock", self.move_distance2, None),
+            "SEMICOLON": KeyAction("Calibrate Turn", self.calibrate_turn, None),
+            "APOSTROPHE": KeyAction("Calibrate Movement", self.calibrate_move, None),
 
             # The following actions are virtual, 'pretty output' items that do not correspond directly to actions, but
             # stand in for action groups or provide prettier name aliases
@@ -190,6 +191,9 @@ class TetheredDriveApp(Tk):
         self.collision_event = EventCollide()
         self.front_event = EventFront()
 
+        self.figure = None
+        self.map_refresh = None
+
     def __del__(self):
         # re-enable the xwindows key repeat.  If this doesn't run, key repeat will be stuck off, and the resulting
         # suffering will lead to the dark side
@@ -268,6 +272,8 @@ class TetheredDriveApp(Tk):
                 self.text.insert(END,
                                  self.help_text({k: a.help for (k, a) in self.key_actions.items() if a.help != ""}))
                 self.world = World(self.robot)
+                if mock_mode:
+                    self.world.clear_calibration()
             except Exception as e:
                 print(f"Failed. Exception - {e}")
                 self.auto_connect = False
@@ -365,12 +371,22 @@ class TetheredDriveApp(Tk):
         if self.robot:
             del self.robot
             self.robot = None
+        if self.map_refresh:
+            self.after_cancel(self.map_refresh)
         self.destroy()
 
+    def notify_fig_closed(self):
+        def inner(evt):
+            self.figure = None
+        return inner
+
     @rr
-    def update_map(self):
+    def update_map(self, new_activate=False):
+        if self.figure is None and not new_activate:
+            return
         # self.dash.start()
-        fig, ax = plot_robot_position(self.world)
+        self.figure = plot_robot_position(self.world, self.figure, self.notify_fig_closed())
+        self.map_refresh = self.after(200, self.update_map)
 
     @rr
     def print_sensors(self):
@@ -511,7 +527,7 @@ class TetheredDriveApp(Tk):
         """
         Begin endless forward motion, that can be paused with bump/light sensors
         """
-        self.actions.append([MoveTimeAction(self.world, 200, 200, 0)])
+        self.actions.append([MoveTimeAction(self.world, 200, 200, 0, is_goal=True)])
 
     @rr
     @need_sensors
@@ -524,8 +540,8 @@ class TetheredDriveApp(Tk):
         # 1 m 1.09%
         # 2 m       75.8 in
         # 3 m       113.5in
-        t = (dist_in_mm*1000*1.11) / 200
-        self.actions.append([MoveTimeAction(self.world, 200, 200, t)])
+        t = (dist_in_mm*1000) / 200
+        self.actions.append([MoveTimeAction(self.world, 200, 200, t, is_goal=True)])
 
     @rr
     @need_sensors
@@ -573,11 +589,18 @@ class TetheredDriveApp(Tk):
 
     @rr
     @need_sensors
-    def move_distance2(self):
-        print("Beginning Move Distance. H to stop")
+    def calibrate_turn(self):
+        print("Beginning Turn Calibration. H to stop")
         #self.actions.append([MoveDistanceAction(self.world, 406*3, 150)])
         self.actions.append([Rotate90Action(self.world, "right", 150),
-                             Rotate90Action(self.world, "left", 150)])
+                             Rotate90Action(self.world, "left", 150, is_goal=True)])
+
+    @rr
+    @need_sensors
+    def calibrate_move(self):
+        print("Beginning Move Calibration. H to stop")
+        self.world.add_landmark("start")
+        self.actions.append([MoveDistanceAction(self.world, 406*3, 150, is_goal=True)])
 
     @rr
     def move_halt(self):

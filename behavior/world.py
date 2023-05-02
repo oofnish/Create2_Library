@@ -19,7 +19,7 @@ class World:
 
         # Odometry
         # useful metrics
-        self.D = 235 #self.robot.WHEEL_BASE  # distance between wheels
+        self.D = 235
         self.max_wheel_velocity = 500  # maximum possible wheel velocity (linear)
         self.grid_resolution = grid_resolution
         self.grid_size = grid_size
@@ -46,6 +46,11 @@ class World:
         # World representation;  occupancy grid with landmarks
         self.landmarks = []
         self.occupancy_grid = [[0 for _ in range(grid_size)] for _ in range(grid_size)]
+
+        for i, row in enumerate(self.occupancy_grid):
+            for j, cell in enumerate(row):
+                if i == 2 or i == grid_size-3 or j == 2 or j == grid_size-3:
+                    self.occupancy_grid[i][j] = 2
 
         # statistics
         # total distance traveled
@@ -125,11 +130,76 @@ class World:
         t = (angle*bias/omega) * 1000
         return t
 
-    def add_landmark(self, x, y, label):
+    def clear_calibration(self):
+        self.rbias = 1
+        self.lbias = 1
+        self.obias = 1
+
+    def add_landmark(self, label):
         """
         adds a 3-tuple to the landmarks list, x, y, and a label.  needs a lot more for it to be useful...
         """
+        x, y, theta = self.get_predicted_position()
         self.landmarks.append((x, y, label))
+
+    def get_predicted_position(self):
+        current_time = time.time()
+        dt = current_time - self.last_update_time
+
+        omega = (self.v_R - self.v_L) / self.D
+
+        if self.v_L != self.v_R:
+            # non-equal velocities create an arc of movement
+            r = self.D * (self.v_L + self.v_R) / (2 * (self.v_R - self.v_L))
+            d_theta = omega * dt
+
+            x = self.x + r * (math.sin(self.theta + d_theta) - math.sin(self.theta))
+            y = self.y + r * (math.cos(self.theta) - math.cos(self.theta + d_theta))
+            theta = self.theta + d_theta
+        else:
+            # equal velocities produce a linear-ish position calculation
+            # velocity component
+            v = (self.v_R + self.v_L) / 2
+            x = self.x + v * dt * math.cos(self.theta)
+            y = self.y + v * dt * math.sin(self.theta)
+
+            theta = self.theta
+
+        return x, y, theta
+
+    def ping(self):
+        """
+        determine updated position based on velocity and time since last change, and update the occupancy grid.
+        This allows free areas that are passed through without velocity changes to be identified, and can also
+        allow sensor readings to identify landmarks without explicitly looking
+        """
+        # current_time = time.time()
+        # dt = current_time - self.last_update_time
+        #
+        # omega = (self.v_R - self.v_L) / self.D
+        #
+        # if self.v_L != self.v_R:
+        #     # non-equal velocities create an arc of movement
+        #     r = self.D * (self.v_L + self.v_R) / (2 * (self.v_R - self.v_L))
+        #     d_theta = omega * dt
+        #
+        #     x = self.x + r * (math.sin(self.theta + d_theta) - math.sin(self.theta))
+        #     y = self.y + r * (math.cos(self.theta) - math.cos(self.theta + d_theta))
+        #     theta = self.theta + d_theta
+        # else:
+        #     # equal velocities produce a linear-ish position calculation
+        #     # velocity component
+        #     v = (self.v_R + self.v_L) / 2
+        #     x = self.x + v * dt * math.cos(self.theta)
+        #     y = self.y + v * dt * math.sin(self.theta)
+
+        x, y, theta = self.get_predicted_position()
+
+        # check sensors here to add landmarks
+        self.mark_occupied_area("left", x, y)
+        self.mark_occupied_area("right", x, y)
+        self.mark_occupied_area("forward", x, y)
+        self.update_free_area(x, y)
 
     def update_free_area(self, x, y):
         """
@@ -144,6 +214,33 @@ class World:
         #if self.update_map:
         #    plot_robot_position(self)
         #    self.update_map = False
+
+    def mark_occupied_area(self, direction, cx=None, cy=None):
+        x = self.x
+        y = self.y
+        if cx:
+            x = cx
+        if cy:
+            y = cy
+
+        match direction:
+            case "forward":
+                angle = 0
+            case "right":
+                angle = -math.pi/2
+            case "left":
+                angle = math.pi/2
+            case _:
+                print("Undefined side in mark_occupied_area")
+                return
+
+        x = x + self.grid_resolution * math.cos(self.theta+angle)
+        y = y + self.grid_resolution * math.sin(self.theta+angle)
+
+        grid_x = int(x / self.grid_resolution)
+        grid_y = int(y / self.grid_resolution)
+
+        self.occupancy_grid[grid_x][grid_y] = 2
 
     def get_position(self):
         """
@@ -167,20 +264,29 @@ class World:
         return plot_robot_position(self)
 
 
-def plot_robot_position(odom, fig=None, ax=None):
+def plot_robot_position(odom, fig=None, close_notify=None):
     res = 406.4
+
     if fig is None:
-        fig, ax = plt.subplots(figsize=(10, 10))
         plt.ion()
+        fig, ax = plt.subplots(figsize=(8, 8))
+        ax.has_been_closed = False
+        #fig = plt.figure(figsize=(8, 8))
         plt.show()
+        fig.canvas.mpl_connect('close_event', close_notify)
+    else:
+        fig.clf()
+        ax = plt.gca()
 
     # Plot occupied grid spaces
     for cell_y, row in enumerate(odom.occupancy_grid):
         for cell_x, cell in enumerate(row):
-            if cell > 0:
+            if cell > 1:
                 square = plt.Rectangle((cell_y*res, cell_x*res), 1*res, 1*res, edgecolor='gray', facecolor='black', lw=1)
-            else:
+            elif cell == 1:
                 square = plt.Rectangle((cell_y*res, cell_x*res), 1*res, 1*res, edgecolor='gray', facecolor='none', lw=1)
+            else:
+                square = plt.Rectangle((cell_y*res, cell_x*res), 1*res, 1*res, edgecolor='gray', facecolor='#dddddd', lw=1)
             ax.add_patch(square)
         #cell_x, cell_y = cell
             #if cell_y == 10:
@@ -191,8 +297,9 @@ def plot_robot_position(odom, fig=None, ax=None):
         ax.scatter(landmark[0], landmark[1], marker='x', color='red')
 
     # Plot robot position
-    ax.scatter(odom.x, odom.y, marker='o', color='blue')
-    ax.quiver(odom.x, odom.y, 100 * math.cos(odom.theta), 100 * math.sin(odom.theta), color='blue', angles='xy', scale_units='xy', scale=1000)
+    x, y, theta = odom.get_predicted_position()
+    ax.scatter(x, y, marker='o', color='blue')
+    ax.quiver(x, y, 100 * math.cos(theta), 100 * math.sin(theta), color='blue', angles='xy', scale_units='xy', scale=1000)
 
     ax.set_xlim(0, 21*res)
     ax.set_ylim(0, 21*res)
@@ -201,4 +308,5 @@ def plot_robot_position(odom, fig=None, ax=None):
     plt.grid(False)
     plt.xlabel('X')
     plt.ylabel('Y')
-    return fig, ax
+    plt.draw()
+    return fig

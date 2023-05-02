@@ -1,3 +1,5 @@
+import math
+
 from createlib.create_robot import *
 
 
@@ -20,10 +22,22 @@ class Map:
         self.cell_size = cell_size
         self.cells = [[0 for _ in range(grid_size)] for _ in range(grid_size)]
 
+        for i, row in enumerate(self.cells):
+            for j, cell in enumerate(row):
+                if i == 2 or i == grid_size-2 or j==2 or j==grid_size-2:
+                    self.cells[i][j] = 2
+
+
         self.beacons = []
 
     def add_beacon(self, x, y, theta):
         self.beacons.append(Map.Beacon(x, y, theta))
+
+    def c_size(self):
+        return self.cell_size
+
+    def cell(self, x, y):
+        return self.cells[x][y]
 
 
 class MockSensorSuite:
@@ -41,15 +55,30 @@ class MockSensorSuite:
         self.v_ir_left = 0
         self.v_ir_right = 0
 
-    def poll(self, x, y, theta):
-        pass
+    def poll(self, map, sensors, x, y, theta):
+        def ray_query(sx, sy, st, dist, angle):
+            sx = sx + dist * math.cos(st+angle)
+            sy = sy + dist * math.sin(st+angle)
+
+            grid_x = int(sx / map.c_size())
+            grid_y = int(sy / map.c_size())
+            if map.cell(grid_x, grid_y) == 2:
+                return dist
+            else:
+                return 0
+
+        sensors[61:63] = struct.pack(">H", ray_query(x, y, theta, 300, 0))
+        sensors[63:65] = struct.pack(">H", ray_query(x, y, theta, 300, 0))
+
 
 
 class MockCreate2(Create2):
     def __init__(self, port, baud=115200):
         self.sampling_rate = 0.015
         self.sleep_timer = 0.5
+        self.vel_variance = 1.0
         self.song_list = {}
+        self.D = 235
 
         # commanded velocity values
         self.desired_rvel = 0
@@ -57,15 +86,17 @@ class MockCreate2(Create2):
 
         # 'real' velocities that include variance.  Currently, assumes instantaneous acceleration
         self.real_rvel = 0
-        self.real_xvel = 0
+        self.real_lvel = 0
 
         # x, y, theta values calculated from real velocity
         self.x = 0
         self.y = 0
         self.theta = 0
 
-        self.map = None
-        self.sensors = None
+        self.map = Map(21)
+        self.sensors = MockSensorSuite()
+
+        self.last_update_time = time.time()
 
     def set_map(self, world_map):
         self.map = world_map
@@ -115,8 +146,40 @@ class MockCreate2(Create2):
         val = val if val > low else low
         return val
 
+    def _update_position(self, dt):
+        # Angular velocity of robot based on independent wheel velocities.
+        omega = (self.real_rvel - self.real_lvel) / self.D
+
+        if self.real_lvel != self.real_rvel:
+            # non-equal velocities create an arc of movement
+            r = self.D * (self.real_lvel + self.real_rvel) / (2 * (self.real_rvel - self.real_lvel))
+            d_theta = omega * dt
+
+            self.x = self.x + r * (math.sin(self.theta + d_theta) - math.sin(self.theta))
+            self.y = self.y + r * (math.cos(self.theta) - math.cos(self.theta + d_theta))
+            self.theta = self.theta + d_theta
+        else:
+            # equal velocities produce a linear-ish position calculation
+            # velocity component
+            v = (self.real_rvel + self.real_lvel) / 2
+            self.x = self.x + v * dt * math.cos(self.theta)
+            self.y = self.y + v * dt * math.sin(self.theta)
+
+    def _set_velocities(self, l_vel, r_vel):
+        self.desired_lvel = l_vel
+        self.desired_rvel = r_vel
+        self.real_lvel = self.desired_lvel * self.vel_variance
+        self.real_rvel = self.desired_rvel * self.vel_variance
+
     def drive_direct(self, l_vel, r_vel):
-        pass
+        current_time = time.time()
+        dt = current_time - self.last_update_time
+
+        # update robot position
+        self._update_position(dt)
+        self._set_velocities(l_vel, r_vel)
+
+        self.last_update_time = current_time
 
     def drive_pwm(self, r_pwm, l_pwm):
         pass
@@ -145,6 +208,8 @@ class MockCreate2(Create2):
     def get_sensors(self):
         # reallocation is faster than zeroing... though GC might be a concern
         mock_sensors = bytearray(80)
+
+        self.sensors.poll(self.map, mock_sensors, self.x, self.y, self.theta)
 
         time.sleep(self.sampling_rate)
         sensors = SensorPacketDecoder(mock_sensors)
