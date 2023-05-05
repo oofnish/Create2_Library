@@ -24,10 +24,10 @@ class Map:
 
         for i, row in enumerate(self.cells):
             for j, cell in enumerate(row):
-                if i == 2 or i == grid_size-2 or j==2 or j==grid_size-2:
+                if i == 4 or i == grid_size-5 or j == 4 or j == grid_size-5:
                     self.cells[i][j] = 2
 
-
+        self.initial_position = [cell_size * grid_size / 2, cell_size * grid_size / 2, 0]
         self.beacons = []
 
     def add_beacon(self, x, y, theta):
@@ -38,6 +38,61 @@ class Map:
 
     def cell(self, x, y):
         return self.cells[x][y]
+
+    def get_start(self):
+        return self.initial_position[0], self.initial_position[1], self.initial_position[2]
+
+    def ray_query(self, start, theta, max_distance):
+        def lineIntersection(ray_start, ray_end, test_start, test_end):
+            rx = ray_end[0] - ray_start[0]
+            ry = ray_end[1] - ray_start[1]
+            sx = test_end[0] - test_start[0]
+            sy = test_end[1] - test_start[1]
+
+            det = (-sx * ry + rx * sy)
+            if abs(det) < 1e-10:
+                return None
+            s = (-ry * (ray_start[0] - test_start[0]) + rx * (ray_start[1] - test_start[1])) / det
+            t = ( sx * (ray_start[1] - test_start[1]) - sy * (ray_start[0] - test_start[0])) / det
+            if s >= 0 and s <= 1 and t >= 0 and t <= 1:
+                return (ray_start[0] + (t * rx), ray_start[1] + (t * ry))
+
+            return None
+
+        # grid coordinate for starting pos
+        sg_x = int(start[0]/self.cell_size)
+        sg_y = int(start[1]/self.cell_size)
+
+        # center coordinate of starting grid position
+        ch = self.cell_size/2
+        ccx = (sg_x+1)*self.cell_size - ch
+        ccy = (sg_x+1)*self.cell_size - ch
+
+        # small offset to pick correct grid coordinate after boundary intersection
+        side_bump = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+
+        # horizontal and vertical grid lines for intersection
+        grid_lines = [((ccx+ch, -1e6), (ccx+ch, 1e6)), ((-1e6, ccy+ch), (1e6, ccy+ch)),
+                      ((ccx-ch, -1e6), (ccx-ch, 1e6)), ((-1e6, ccy-ch), (1e6, ccy-ch))]
+
+        # endpoint for ray intersection test
+        end = (start[0] + max_distance*math.cos(theta), start[1]+max_distance * math.sin(theta))
+
+        closest = 1e6
+        ret = [None, 0, 0, 0]
+        for n, seg in enumerate(grid_lines):
+            isect = lineIntersection(start, end, seg[0], seg[1])
+            if isect:
+                dist = math.sqrt((isect[0]-start[0])**2 + (isect[1]-start[1])**2)
+                cs = (isect[0]+side_bump[n][0], isect[1]+side_bump[n][1])
+                gx = int(cs[0]/self.cell_size)
+                gy = int(cs[1]/self.cell_size)
+                if self.cells[gx][gy] == 2:
+                    if dist < closest:
+                        closest = dist
+                        ret = [isect, dist, gx, gy]
+
+        return ret
 
 
 class MockSensorSuite:
@@ -55,21 +110,50 @@ class MockSensorSuite:
         self.v_ir_left = 0
         self.v_ir_right = 0
 
-    def poll(self, map, sensors, x, y, theta):
-        def ray_query(sx, sy, st, dist, angle):
-            sx = sx + dist * math.cos(st+angle)
-            sy = sy + dist * math.sin(st+angle)
+        # light sensor range
+        self.ls_range = 220
+        self.ls_offset = 0
+        self.ls_scale = 1024 / self.ls_range
 
-            grid_x = int(sx / map.c_size())
-            grid_y = int(sy / map.c_size())
-            if map.cell(grid_x, grid_y) == 2:
-                return dist
-            else:
-                return 0
+    def sensor_center(self, x, y, theta):
+        return x + self.ls_offset * math.cos(theta), y + self.ls_offset * math.sin(theta)
 
-        sensors[61:63] = struct.pack(">H", ray_query(x, y, theta, 300, 0))
-        sensors[63:65] = struct.pack(">H", ray_query(x, y, theta, 300, 0))
+    def poll(self, real_map, sensors, x, y, theta):
+        cx, cy = self.sensor_center(x, y, theta)
 
+        def light_sensor(angle):
+            dist = real_map.ray_query((cx, cy), theta+angle, self.ls_range)[1]
+            dinv = self.ls_range - dist
+            if dinv < 0 or dinv >= self.ls_range:
+                dinv = 0
+            return int(dinv*self.ls_scale)
+
+            # sx = sx + dist * math.cos(st+angle)
+            # sy = sy + dist * math.sin(st+angle)
+            #
+            # grid_x = int(sx / real_map.c_size())
+            # grid_y = int(sy / real_map.c_size())
+            # if real_map.cell(grid_x, grid_y) == 2:
+            #     return dist
+            # else:
+            #     return 0
+
+
+        #real_map.ray_query((x, y), theta+math.pi/12, 600)
+        #sensors[61:63] = struct.pack(">H", ray_query(x, y, theta, 305, 0))
+        #sensors[63:65] = struct.pack(">H", ray_query(x, y, theta, 305, 0))
+        sensors[57:59] = struct.pack(">H", light_sensor(math.pi/2))
+        sensors[59:61] = struct.pack(">H", light_sensor(math.pi/4))
+        sensors[61:63] = struct.pack(">H", light_sensor(0))
+        sensors[63:65] = struct.pack(">H", light_sensor(0))
+        sensors[65:67] = struct.pack(">H", light_sensor(-math.pi/4))
+        sensors[67:69] = struct.pack(">H", light_sensor(-math.pi/2))
+        #sensors[57:59] = struct.pack(">H", int(real_map.ray_query((cx, cy), theta+math.pi/2, self.ls_range)[1]))
+        #sensors[59:61] = struct.pack(">H", int(real_map.ray_query((cx, cy), theta+math.pi/4, self.ls_range)[1]))
+        #sensors[61:63] = struct.pack(">H", int(real_map.ray_query((cx, cy), theta+math.pi/8, self.ls_range)[1]))
+        #sensors[63:65] = struct.pack(">H", int(real_map.ray_query((cx, cy), theta-math.pi/8, self.ls_range)[1]))
+        #sensors[65:67] = struct.pack(">H", int(real_map.ray_query((cx, cy), theta-math.pi/4, self.ls_range)[1]))
+        #sensors[67:69] = struct.pack(">H", int(real_map.ray_query((cx, cy), theta-math.pi/2, self.ls_range)[1]))
 
 
 class MockCreate2(Create2):
@@ -80,6 +164,8 @@ class MockCreate2(Create2):
         self.song_list = {}
         self.D = 235
 
+        self.map = Map(21)
+
         # commanded velocity values
         self.desired_rvel = 0
         self.desired_lvel = 0
@@ -89,11 +175,8 @@ class MockCreate2(Create2):
         self.real_lvel = 0
 
         # x, y, theta values calculated from real velocity
-        self.x = 0
-        self.y = 0
-        self.theta = 0
+        self.x, self.y, self.theta = self.map.get_start()
 
-        self.map = Map(21)
         self.sensors = MockSensorSuite()
 
         self.last_update_time = time.time()
@@ -146,8 +229,11 @@ class MockCreate2(Create2):
         val = val if val > low else low
         return val
 
-    def _update_position(self, dt):
-        # Angular velocity of robot based on independent wheel velocities.
+    def _get_predicted_position(self, dt=None):
+        if not dt:
+            current_time = time.time()
+            dt = current_time - self.last_update_time
+
         omega = (self.real_rvel - self.real_lvel) / self.D
 
         if self.real_lvel != self.real_rvel:
@@ -155,15 +241,40 @@ class MockCreate2(Create2):
             r = self.D * (self.real_lvel + self.real_rvel) / (2 * (self.real_rvel - self.real_lvel))
             d_theta = omega * dt
 
-            self.x = self.x + r * (math.sin(self.theta + d_theta) - math.sin(self.theta))
-            self.y = self.y + r * (math.cos(self.theta) - math.cos(self.theta + d_theta))
-            self.theta = self.theta + d_theta
+            x = self.x + r * (math.sin(self.theta + d_theta) - math.sin(self.theta))
+            y = self.y + r * (math.cos(self.theta) - math.cos(self.theta + d_theta))
+            theta = self.theta + d_theta
         else:
             # equal velocities produce a linear-ish position calculation
             # velocity component
             v = (self.real_rvel + self.real_lvel) / 2
-            self.x = self.x + v * dt * math.cos(self.theta)
-            self.y = self.y + v * dt * math.sin(self.theta)
+            x = self.x + v * dt * math.cos(self.theta)
+            y = self.y + v * dt * math.sin(self.theta)
+
+            theta = self.theta
+
+        return x, y, theta
+
+    def _update_position(self, dt):
+
+        self.x, self.y, self.theta = self._get_predicted_position(dt)
+        # Angular velocity of robot based on independent wheel velocities.
+        # omega = (self.real_rvel - self.real_lvel) / self.D
+        #
+        # if self.real_lvel != self.real_rvel:
+        #     # non-equal velocities create an arc of movement
+        #     r = self.D * (self.real_lvel + self.real_rvel) / (2 * (self.real_rvel - self.real_lvel))
+        #     d_theta = omega * dt
+        #
+        #     self.x = self.x + r * (math.sin(self.theta + d_theta) - math.sin(self.theta))
+        #     self.y = self.y + r * (math.cos(self.theta) - math.cos(self.theta + d_theta))
+        #     self.theta = self.theta + d_theta
+        # else:
+        #     # equal velocities produce a linear-ish position calculation
+        #     # velocity component
+        #     v = (self.real_rvel + self.real_lvel) / 2
+        #     self.x = self.x + v * dt * math.cos(self.theta)
+        #     self.y = self.y + v * dt * math.sin(self.theta)
 
     def _set_velocities(self, l_vel, r_vel):
         self.desired_lvel = l_vel
@@ -206,10 +317,10 @@ class MockCreate2(Create2):
         return time_len
 
     def get_sensors(self):
+        x, y, theta = self._get_predicted_position()
         # reallocation is faster than zeroing... though GC might be a concern
         mock_sensors = bytearray(80)
-
-        self.sensors.poll(self.map, mock_sensors, self.x, self.y, self.theta)
+        self.sensors.poll(self.map, mock_sensors, x, y, theta)
 
         time.sleep(self.sampling_rate)
         sensors = SensorPacketDecoder(mock_sensors)

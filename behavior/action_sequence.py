@@ -25,6 +25,13 @@ class EVENT_TYPE(enum.IntEnum):
     FRONT = 0x08  # Front event, Light bumper notification of impending collision
 
 
+class EVENT_MESSAGE:
+    TURN_LEFT_90 = "TurnLeft90"
+    TURN_RIGHT_90 = "TurnRight90"
+    WANDER = "Wander"
+    SETSTATE = "SetState"
+
+
 class EventBeginAction:
     type = EVENT_TYPE.BEGIN
 
@@ -165,7 +172,9 @@ class ActionSequence(threading.Thread):
                     continue
                 # pass the event details to the current action set for processing
                 for a in self.action_sets[self.current_action]:
-                    result = a.update(evt)
+                    result, msg = a.update(evt)
+                    if msg != "":
+                        self.next_action.put(EventMessage(msg))
                     # result = self.action_sets[self.current_action].update(evt)
                     match result:
                         case UPDATE_RESULT.BREAK:
@@ -183,6 +192,7 @@ class ActionSequence(threading.Thread):
                             return
                         case _:
                             print("UNDEFINED RESULT!")
+                            hb_timer.stop()
             # check our flag; if any of the events resulted in the action reaching completion, we want to go to the next
             if start_next_action:
                 self.current_action += 1

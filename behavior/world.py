@@ -1,7 +1,10 @@
 import math
 import time
+import heapq
 
 from matplotlib import pyplot as plt
+
+from behavior.action_behaviors import Threshold
 
 
 class World:
@@ -41,20 +44,22 @@ class World:
         # Adjustments to ideal velocity values for measuring movement
         self.lbias = 1.13
         self.rbias = 1.13
-        self.obias = 1.155
+        self.obias = 1.02 #1.125
 
         # World representation;  occupancy grid with landmarks
         self.landmarks = []
         self.occupancy_grid = [[0 for _ in range(grid_size)] for _ in range(grid_size)]
 
-        for i, row in enumerate(self.occupancy_grid):
-            for j, cell in enumerate(row):
-                if i == 2 or i == grid_size-3 or j == 2 or j == grid_size-3:
-                    self.occupancy_grid[i][j] = 2
+        # for i, row in enumerate(self.occupancy_grid):
+        #     for j, cell in enumerate(row):
+        #         if i == 2 or i == grid_size-3 or j == 2 or j == grid_size-3:
+        #             self.occupancy_grid[i][j] = 2
 
         # statistics
         # total distance traveled
         self.total_dist = 0
+
+        self.action_state = ""
 
     def sense(self, refresh=False):
         """
@@ -62,6 +67,7 @@ class World:
         """
         if refresh is True or self.sensors is None:
             self.sensors = self.robot.get_sensors()
+            self.ping()
 
         return self.sensors
 
@@ -115,19 +121,22 @@ class World:
             self.x = self.x + v * dt * math.cos(self.theta)
             self.y = self.y + v * dt * math.sin(self.theta)
 
+    def update_action_state(self, state_info):
+        self.action_state = state_info
+
     def get_move_time_bias(self, dist, vel):
         bias = self.rbias
         if self.lbias != self.rbias:
-            bias = (self.rbias+self.lbias) / 2
-        t = (dist*bias/vel) * 1000
+            bias = (self.rbias + self.lbias) / 2
+        t = (dist * bias / vel) * 1000
         return t
 
     def get_rotate_time_bias(self, angle, vel):
-        omega = (2*vel) / self.D
+        omega = (2 * vel) / self.D
         bias = self.obias
         # if self.lbias != self.rbias:
         #     bias = (self.rbias+self.lbias) / 2
-        t = (angle*bias/omega) * 1000
+        t = (angle * bias / omega) * 1000
         return t
 
     def clear_calibration(self):
@@ -173,32 +182,16 @@ class World:
         This allows free areas that are passed through without velocity changes to be identified, and can also
         allow sensor readings to identify landmarks without explicitly looking
         """
-        # current_time = time.time()
-        # dt = current_time - self.last_update_time
-        #
-        # omega = (self.v_R - self.v_L) / self.D
-        #
-        # if self.v_L != self.v_R:
-        #     # non-equal velocities create an arc of movement
-        #     r = self.D * (self.v_L + self.v_R) / (2 * (self.v_R - self.v_L))
-        #     d_theta = omega * dt
-        #
-        #     x = self.x + r * (math.sin(self.theta + d_theta) - math.sin(self.theta))
-        #     y = self.y + r * (math.cos(self.theta) - math.cos(self.theta + d_theta))
-        #     theta = self.theta + d_theta
-        # else:
-        #     # equal velocities produce a linear-ish position calculation
-        #     # velocity component
-        #     v = (self.v_R + self.v_L) / 2
-        #     x = self.x + v * dt * math.cos(self.theta)
-        #     y = self.y + v * dt * math.sin(self.theta)
-
         x, y, theta = self.get_predicted_position()
 
         # check sensors here to add landmarks
-        self.mark_occupied_area("left", x, y)
-        self.mark_occupied_area("right", x, y)
-        self.mark_occupied_area("forward", x, y)
+        if self.sensors.light_bumper_center_left > Threshold.Clear and \
+                self.sensors.light_bumper_center_right > Threshold.Clear:
+            self.mark_occupied_area("forward", x, y)
+        if self.sensors.light_bumper_left > Threshold.Clear:
+            self.mark_occupied_area("left", x, y)
+        if self.sensors.light_bumper_right > Threshold.Clear:
+            self.mark_occupied_area("right", x, y)
         self.update_free_area(x, y)
 
     def update_free_area(self, x, y):
@@ -211,7 +204,7 @@ class World:
 
         self.occupancy_grid[grid_x][grid_y] = 1
 
-        #if self.update_map:
+        # if self.update_map:
         #    plot_robot_position(self)
         #    self.update_map = False
 
@@ -227,15 +220,15 @@ class World:
             case "forward":
                 angle = 0
             case "right":
-                angle = -math.pi/2
+                angle = -math.pi / 2
             case "left":
-                angle = math.pi/2
+                angle = math.pi / 2
             case _:
                 print("Undefined side in mark_occupied_area")
                 return
 
-        x = x + self.grid_resolution * math.cos(self.theta+angle)
-        y = y + self.grid_resolution * math.sin(self.theta+angle)
+        x = x + self.grid_resolution * math.cos(self.theta + angle)
+        y = y + self.grid_resolution * math.sin(self.theta + angle)
 
         grid_x = int(x / self.grid_resolution)
         grid_y = int(y / self.grid_resolution)
@@ -263,6 +256,57 @@ class World:
     def world_vis(self):
         return plot_robot_position(self)
 
+    def get_free_neighbors(self, cell):
+        x, y = cell
+        neighbors = [(x-1, y), (x+1, y), (x, y-1), (x, y+1)]
+
+        valid_neighbors = []
+        for nx, ny in neighbors:
+            if 0 <= nx < len(self.occupancy_grid[0]) and 0 <= ny < len(self.occupancy_grid) and self.occupancy_grid[ny][nx] < 2:  # Only return free neighbors
+                valid_neighbors.append((nx, ny))
+
+        return valid_neighbors
+
+    def a_star_search(self, start, goal):
+        frontier = []
+        heapq.heappush(frontier, (0, start))
+        came_from = {start: None}
+        cost_so_far = {start: 0}
+
+        while frontier:
+            _, current = heapq.heappop(frontier)
+
+            if current == goal:
+                break
+
+            for next_cell in self.get_free_neighbors(current):
+                new_cost = cost_so_far[current] + 1
+                if next_cell not in cost_so_far or new_cost < cost_so_far[next_cell]:
+                    cost_so_far[next_cell] = new_cost
+                    priority = new_cost + (abs(goal[0] - next_cell[0]) + abs(goal[1] - next_cell[1]))
+                    heapq.heappush(frontier, (priority, next_cell))
+                    came_from[next_cell] = current
+
+        if goal not in came_from:
+            return None
+
+        path = [goal]
+        while path[-1] != start:
+            path.append(came_from[path[-1]])
+        path.reverse()
+        return path
+
+    def find_nearest_unvisited_cell(self, start):
+        unvisited_cells = [(x, y) for y in range(len(self.occupancy_grid)) for x in range(len(self.occupancy_grid[0])) if self.occupancy_grid[y][x] == 0]
+
+        shortest_path = None
+        for cell in unvisited_cells:
+            path = self.a_star_search(start, cell)
+            if path is not None and (shortest_path is None or len(path) < len(shortest_path)):
+                shortest_path = path
+
+        return shortest_path
+
 
 def plot_robot_position(odom, fig=None, close_notify=None):
     res = 406.4
@@ -271,7 +315,7 @@ def plot_robot_position(odom, fig=None, close_notify=None):
         plt.ion()
         fig, ax = plt.subplots(figsize=(8, 8))
         ax.has_been_closed = False
-        #fig = plt.figure(figsize=(8, 8))
+        # fig = plt.figure(figsize=(8, 8))
         plt.show()
         fig.canvas.mpl_connect('close_event', close_notify)
     else:
@@ -282,15 +326,18 @@ def plot_robot_position(odom, fig=None, close_notify=None):
     for cell_y, row in enumerate(odom.occupancy_grid):
         for cell_x, cell in enumerate(row):
             if cell > 1:
-                square = plt.Rectangle((cell_y*res, cell_x*res), 1*res, 1*res, edgecolor='gray', facecolor='black', lw=1)
+                square = plt.Rectangle((cell_y * res, cell_x * res), 1 * res, 1 * res, edgecolor='gray',
+                                       facecolor='black', lw=1)
             elif cell == 1:
-                square = plt.Rectangle((cell_y*res, cell_x*res), 1*res, 1*res, edgecolor='gray', facecolor='none', lw=1)
+                square = plt.Rectangle((cell_y * res, cell_x * res), 1 * res, 1 * res, edgecolor='gray',
+                                       facecolor='none', lw=1)
             else:
-                square = plt.Rectangle((cell_y*res, cell_x*res), 1*res, 1*res, edgecolor='gray', facecolor='#dddddd', lw=1)
+                square = plt.Rectangle((cell_y * res, cell_x * res), 1 * res, 1 * res, edgecolor='gray',
+                                       facecolor='#dddddd', lw=1)
             ax.add_patch(square)
-        #cell_x, cell_y = cell
-            #if cell_y == 10:
-            #    ax.add_patch(plt.Rectangle((cell_x*res - 0.5*res, (21-cell_y)*res - 0.5*res), res, res, facecolor='black'))
+        # cell_x, cell_y = cell
+        # if cell_y == 10:
+        #    ax.add_patch(plt.Rectangle((cell_x*res - 0.5*res, (21-cell_y)*res - 0.5*res), res, res, facecolor='black'))
 
     # Plot landmarks
     for landmark in odom.landmarks:
@@ -298,13 +345,14 @@ def plot_robot_position(odom, fig=None, close_notify=None):
 
     # Plot robot position
     x, y, theta = odom.get_predicted_position()
-    ax.scatter(x, y, marker='o', color='blue')
-    ax.quiver(x, y, 100 * math.cos(theta), 100 * math.sin(theta), color='blue', angles='xy', scale_units='xy', scale=1000)
+    ax.scatter(x, y, marker='D', color='blue')
+    ax.quiver(x, y, 300 * math.cos(theta), 300 * math.sin(theta), color='blue', angles='xy', scale_units='xy',
+              scale=1)
 
-    ax.set_xlim(0, 21*res)
-    ax.set_ylim(0, 21*res)
+    ax.set_xlim(0, 21 * res)
+    ax.set_ylim(0, 21 * res)
     ax.set_aspect('equal')
-    #ax.set_aspect('equal', adjustable='box')
+    # ax.set_aspect('equal', adjustable='box')
     plt.grid(False)
     plt.xlabel('X')
     plt.ylabel('Y')

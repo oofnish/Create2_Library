@@ -1,7 +1,7 @@
 import math
 import os
 
-from behavior.action_sequence import EVENT_TYPE, UPDATE_RESULT
+from behavior.action_sequence import EVENT_TYPE, UPDATE_RESULT, EVENT_MESSAGE
 from behavior.pidcontrol import PID_Control
 from createlib.create_oi import *
 
@@ -41,7 +41,7 @@ class Action:
 
     def update(self, evt):
         if not self.active:
-            return UPDATE_RESULT.PASS
+            return UPDATE_RESULT.PASS, ""
 
     def cleanup(self):
         pass
@@ -108,8 +108,9 @@ class CollisionBackupAction(Action):
         if sensors.charger_state == CHARGE_SOURCE.HOME_BASE:
             print("CHARGING (Collision)")
             self.deactivate()
-            return UPDATE_RESULT.OK
+            return UPDATE_RESULT.OK, ""
         result = UPDATE_RESULT.OK
+        msg = ""
         match evt.type:
             case EVENT_TYPE.COLLIDE:
                 if not self.active:
@@ -123,7 +124,7 @@ class CollisionBackupAction(Action):
                 result = self._time_elapsed(evt.data)
             case _:
                 result = UPDATE_RESULT.PASS
-        return result
+        return result, msg
 
 
 class TurnLeftToClearAction(Action):
@@ -140,6 +141,18 @@ class TurnLeftToClearAction(Action):
         super().__init__(**kwargs)
         self.world = worldref
         self.vel = vel
+        self.first_turn = False
+        self.lm_name = "Corner"
+        self.max_lm_count = 4
+        self.do_landmark = False
+        for k, v in kwargs.items():
+            match k:
+                case "landmark_name":
+                    self.lm_name = v
+                case "max_lm_count":
+                    self.max_lm_count = v
+                case "add_landmark":
+                    self.do_landmark = True
 
     def begin(self):
         pass
@@ -147,6 +160,10 @@ class TurnLeftToClearAction(Action):
     def activate(self):
         print("Activating Turn Left To Clear")
         super().activate()
+        if self.do_landmark:
+            self.world.add_landmark("Corner")
+            self.max_lm_count = self.max_lm_count - 1
+
         self._start_motion()
 
     def deactivate(self):
@@ -168,11 +185,13 @@ class TurnLeftToClearAction(Action):
 
         sensors = self.world.sense()
 
-        if sensors.light_bumper_center_left < Threshold.Clear \
-                and sensors.light_bumper_front_left < Threshold.Clear \
-                and sensors.light_bumper_front_right < Threshold.Clear:
-                #and sensors.light_bumper_center_right < Threshold.Clear:
+        if sensors.light_bumper_front_left < Threshold.Clear \
+                and sensors.light_bumper_center_left < Threshold.Clear \
+                and sensors.light_bumper_center_right < Threshold.Clear:
+                #and sensors.light_bumper_front_right < Threshold.Clear:
             self.deactivate()
+            if self.do_landmark and self.max_lm_count == 0:
+                return UPDATE_RESULT.DONE
             return UPDATE_RESULT.OK
 
         # we're in the middle of turning since sensors haven't cleared yet, prevent later actions from running
@@ -180,6 +199,7 @@ class TurnLeftToClearAction(Action):
 
     def update(self, evt):
         result = UPDATE_RESULT.OK
+        msg = ""
         match evt.type:
             case EVENT_TYPE.FRONT:
                 if not self.active:
@@ -187,7 +207,7 @@ class TurnLeftToClearAction(Action):
                 result = UPDATE_RESULT.BREAK
             case EVENT_TYPE.FINISH:
                 self.deactivate()
-                return UPDATE_RESULT.DONE
+                return UPDATE_RESULT.DONE, ""
             case EVENT_TYPE.TIMER:
                 result = self._time_elapsed()
             case _:
@@ -195,7 +215,7 @@ class TurnLeftToClearAction(Action):
                     result = UPDATE_RESULT.BREAK
                 else:
                     result = UPDATE_RESULT.PASS
-        return result
+        return result, msg
 
 
 class TurnRightToClearAction(Action):
@@ -258,6 +278,7 @@ class TurnRightToClearAction(Action):
 
     def update(self, evt):
         result = UPDATE_RESULT.OK
+        msg = ""
         match evt.type:
             case EVENT_TYPE.FRONT:
                 self.activate()
@@ -269,7 +290,7 @@ class TurnRightToClearAction(Action):
                 result = self._time_elapsed()
             case _:
                 result = UPDATE_RESULT.PASS
-        return result
+        return result, msg
 
 
 class WallFollowAction(Action):
@@ -331,6 +352,7 @@ class WallFollowAction(Action):
 
     def update(self, evt):
         result = UPDATE_RESULT.OK
+        msg = ""
         match evt.type:
             case EVENT_TYPE.FINISH:
                 self.deactivate()
@@ -341,7 +363,7 @@ class WallFollowAction(Action):
                 result = self._time_elapsed(evt.data)
             case _:
                 result = UPDATE_RESULT.PASS
-        return result
+        return result, msg
 
 
 class DockingAction(Action):
@@ -363,7 +385,7 @@ class DockingAction(Action):
     168 Red Buoy
     169 Red Buoy and Force Field
     172 Red Buoy and Green Buoy
-    173 Red Buoy, Greeen Buoy, and Force Field
+    173 Red Buoy, Green Buoy, and Force Field
     165 Green Buoy and Force Field
     164 Green Buoy
     """
@@ -376,7 +398,6 @@ class DockingAction(Action):
         self.world = worldref
         self.dock_controller = PID_Control(.4, .01, .5, POLLING_PERIOD)
         self.moving = False
-
 
     def begin(self):
         pass
@@ -450,17 +471,18 @@ class DockingAction(Action):
 
     def update(self, evt):
         result = UPDATE_RESULT.OK
+        msg = ""
         match evt.type:
             case EVENT_TYPE.FINISH:
                 self.deactivate()
-                result= UPDATE_RESULT.DONE
+                result = UPDATE_RESULT.DONE
             case EVENT_TYPE.TIMER:
                 if not self.moving:
                     self.activate()
                 result = self._time_elapsed(evt.data)
             case _:
                 result = UPDATE_RESULT.PASS
-        return result
+        return result, msg
 
 
 class MoveToDocking(Action):
@@ -533,7 +555,7 @@ class MoveToDocking(Action):
         u = self.dock_controller.PID(0 - error)
 
         dev = int(u)
- #
+
         dev = max(min(dev, 50), -50)
         if not self.turn_toward_dock:
             self.rvel = self.basevel + dev
@@ -548,6 +570,7 @@ class MoveToDocking(Action):
 
     def update(self, evt):
         result = UPDATE_RESULT.OK
+        msg = ""
         match evt.type:
             case EVENT_TYPE.FINISH:
                 self.deactivate()
@@ -558,7 +581,7 @@ class MoveToDocking(Action):
                 result = self._time_elapsed(evt.data)
             case _:
                 result = UPDATE_RESULT.PASS
-        return result
+        return result, msg
 
 
 class WanderAction(Action):
@@ -608,11 +631,22 @@ class WanderAction(Action):
 
     def update(self, evt):
         result = UPDATE_RESULT.OK
+        msg = ""
         match evt.type:
             case EVENT_TYPE.FRONT:
-                self.deactivate()
+                if self.active:
+                    msg = EVENT_MESSAGE.TURN_LEFT_90
+                    self.deactivate()
+                else:
+                    result = UPDATE_RESULT.PASS
             case EVENT_TYPE.COLLIDE:
                 self.deactivate()
+            case EVENT_TYPE.MESSAGE:
+                if evt.data == "Wander":
+                    if not self.active:
+                        print("Wander msg recvd")
+                        self.activate()
+                        result = UPDATE_RESULT.BREAK
             case EVENT_TYPE.FINISH:
                 self.deactivate()
                 result = UPDATE_RESULT.DONE
@@ -620,7 +654,7 @@ class WanderAction(Action):
                 result = self._timer_elapsed()
             case _:
                 result = UPDATE_RESULT.PASS
-        return result
+        return result, msg
 
 
 class MoveTimeAction(Action):
@@ -657,6 +691,7 @@ class MoveTimeAction(Action):
 
     def update(self, evt):
         result = UPDATE_RESULT.OK
+        msg = ""
         match evt.type:
             case EVENT_TYPE.FRONT:
                 # halt wheel motion
@@ -681,7 +716,7 @@ class MoveTimeAction(Action):
                         self.world.ping()
             case _:
                 result = UPDATE_RESULT.PASS
-        return result
+        return result, msg
 
     def cancel(self):
         if 0 < self.total_t <= self.elapsed_t:
@@ -725,6 +760,7 @@ class MoveDistanceAction(Action):
 
     def update(self, evt):
         result = UPDATE_RESULT.OK
+        msg = ""
         match evt.type:
             case EVENT_TYPE.FRONT:
                 # halt wheel motion
@@ -750,7 +786,7 @@ class MoveDistanceAction(Action):
                         result = UPDATE_RESULT.BREAK
             case _:
                 result = UPDATE_RESULT.PASS
-        return result
+        return result, msg
 
 
 class Rotate90Action(Action):
@@ -777,6 +813,7 @@ class Rotate90Action(Action):
 
     def activate(self):
         print("Activating 90 Degree rotate {}".format(self.dir))
+        self.elapsed_t = 0
         super().activate()
         self._start_motion()
 
@@ -792,13 +829,23 @@ class Rotate90Action(Action):
 
     def update(self, evt):
         result = UPDATE_RESULT.OK
+        msg = ""
         match evt.type:
             case EVENT_TYPE.FINISH:
                 self.deactivate()
                 result = UPDATE_RESULT.DONE
+            case EVENT_TYPE.MESSAGE:
+                if evt.data == EVENT_MESSAGE.TURN_LEFT_90:
+                    print("Turn Message Recvd")
+                    self.done = False
+                    if not self.active:
+                         self.activate()
+                    result = UPDATE_RESULT.BREAK
+                else:
+                    result = UPDATE_RESULT.PASS
             case EVENT_TYPE.TIMER:
                 if self.done:
-                    return UPDATE_RESULT.PASS
+                    return UPDATE_RESULT.PASS, ""
                 if not self.active:
                     self.activate()
                 if self.active:
@@ -811,4 +858,111 @@ class Rotate90Action(Action):
                         result = UPDATE_RESULT.BREAK
             case _:
                 result = UPDATE_RESULT.PASS
-        return result
+        return result, msg
+
+
+class SetStateFromMessage(Action):
+    def __init__(self, worldref, **kwargs):
+        super().__init__(**kwargs)
+        self.world = worldref
+        self.sent = False
+
+    def activate(self):
+        super().activate()
+
+    def deactivate(self):
+        super().deactivate()
+        self.done = True
+
+    def begin(self):
+        pass
+        # send command to drive robot with the configured wheel velocities
+        #self._start_motion()
+
+    def update(self, evt):
+        result = UPDATE_RESULT.OK
+        msg = ""
+        match evt.type:
+            case EVENT_TYPE.FINISH:
+                self.deactivate()
+                result = UPDATE_RESULT.DONE
+            case EVENT_TYPE.MESSAGE:
+                if evt.data.startswith(EVENT_MESSAGE.SETSTATE):
+                    print("Set State Message Recvd")
+                    self.world.update_action_state(evt.data[len(EVENT_MESSAGE.SETSTATE)-1:])
+                    result = UPDATE_RESULT.BREAK
+                else:
+                    result = UPDATE_RESULT.PASS
+            case _:
+                result = UPDATE_RESULT.PASS
+        return result, msg
+
+
+class PostMessageAction(Action):
+    def __init__(self, worldref, msg, **kwargs):
+        super().__init__(**kwargs)
+        self.world = worldref
+        self.msg = msg
+        self.sent = False
+
+    def activate(self):
+        print("Sending Message".format(self.msg))
+        super().activate()
+
+    def deactivate(self):
+        super().deactivate()
+        self.done = True
+
+    def begin(self):
+        pass
+        # send command to drive robot with the configured wheel velocities
+        #self._start_motion()
+
+    def update(self, evt):
+        result = UPDATE_RESULT.OK
+        msg = ""
+        match evt.type:
+            case EVENT_TYPE.FINISH:
+                self.deactivate()
+                result = UPDATE_RESULT.DONE
+            case EVENT_TYPE.TIMER:
+                msg = self.msg
+            case _:
+                result = UPDATE_RESULT.PASS
+        return result, msg
+
+
+class AddLandmarkAction(Action):
+    def __init__(self, worldref, label, **kwargs):
+        super().__init__(**kwargs)
+        self.world = worldref
+        self.label = label
+        self.sent = False
+
+    def activate(self):
+        print("Marking Cell with Landmark".format(self.label))
+        self.world.add_landmark(self.label)
+        super().activate()
+
+    def deactivate(self):
+        super().deactivate()
+        self.done = True
+
+    def begin(self):
+        pass
+        # send command to drive robot with the configured wheel velocities
+        #self._start_motion()
+
+    def update(self, evt):
+        result = UPDATE_RESULT.OK
+        msg = ""
+        match evt.type:
+            case EVENT_TYPE.FINISH:
+                self.deactivate()
+                result = UPDATE_RESULT.DONE
+            case EVENT_TYPE.TIMER:
+                #if not self.active:
+                self.activate()
+            case _:
+                result = UPDATE_RESULT.PASS
+        return result, msg

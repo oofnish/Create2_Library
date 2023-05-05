@@ -111,6 +111,7 @@ class TetheredDriveApp(Tk):
             "COMMA": KeyAction("FindDock", self.find_dock, None),
             "SEMICOLON": KeyAction("Calibrate Turn", self.calibrate_turn, None),
             "APOSTROPHE": KeyAction("Calibrate Movement", self.calibrate_move, None),
+            "/": KeyAction("Coverage Map", self.map_coverage, None),
 
             # The following actions are virtual, 'pretty output' items that do not correspond directly to actions, but
             # stand in for action groups or provide prettier name aliases
@@ -454,6 +455,7 @@ class TetheredDriveApp(Tk):
             sensors.light_bumper.front_left,
             sensors.light_bumper.left], [sensors.ir_opcode_left, sensors.ir_opcode_right, sensors.ir_opcode]
         )
+        print((self.world.x, self.world.y, self.world.theta))
 
     @rr
     def query_wall_cliff_signals(self):
@@ -571,8 +573,6 @@ class TetheredDriveApp(Tk):
         """
         Begin wall follow behavior -- first move forward until a wall is encountered, then perform wall following
         behavior
-        :param dist_in_mm:
-        :return:
         """
         print("Beginning Wall Follow. H to stop")
         self.actions.append([   CollisionBackupAction(self.world, 50, 1500),
@@ -581,11 +581,48 @@ class TetheredDriveApp(Tk):
                                 TurnLeftToClearAction(self.world, 80),
                                 WallFollowAction(self.world, 80)
                              ])
-        #self.actions.append([CollisionBackupAction(self.world, 50, 3),
-        #                     TurnLeftToClearAction(self.world, 100),
-        #                     WanderAction(self.world, 200, 200),
-        #                     WallFollowAction(self.world, 300)
-        #                     ])
+
+    @rr
+    @need_sensors
+    def map_coverage(self):
+        """
+        Begin coverage mapping --
+        1. move forward until a wall is encountered
+        2. follow wall until four corners are encountered,
+        3. perform boustrophedon pathing until an island is encountered (a wall is seen from an unvisited cell)
+        4. wall follow until a full boundary is completed
+        5. continue boustrophedon until a corner from step 2 is encountered
+        6. search for free areas, path to complete, and mark unreachable paths
+        behavior
+        """
+        self.actions.append([   CollisionBackupAction(self.world, 50, 1500),
+                                WanderAction(self.world, 150, 150),
+                                TurnLeftToClearAction(self.world, 80),
+                                ])
+        self.actions.append([   CollisionBackupAction(self.world, 50, 1500),
+                                #AddLandmarkAction(self.world, "Corner"),
+                                TurnLeftToClearAction(self.world, 80, add_landmark=True, max_lm_count=4),
+                                WallFollowAction(self.world, 80)
+                                ])
+        # TODO: boustrophedon modified with island boundary tracing, use action message and turn direction toggling
+        self.actions.append([   CollisionBackupAction(self.world, 50, 1500),
+                                SetStateFromMessage(self.world),
+                                Rotate90Action(self.world, "toggle", 150),
+                                MoveDistanceAction(self.world, self.world.grid_resolution),
+                                Rotate90Action(self.world, "toggle", 150),
+                                WanderAction(self.world, 150, 150),
+                                TurnLeftToClearAction(self.world, 80),
+                                WallFollowAction(self.world, 80)
+                                ])
+        # TODO: path to unvisitied spaces after boustrophedon pathing is done.  This will clear up any missed
+        # locations, and mark unreachable paths.
+        # self.actions.append([   CollisionBackupAction(self.world, 50, 1500),
+        #                         PathToUnvisited(self.world),
+        #                         ])
+        # TODO: search for beacon landmarks, and play sad song if not found
+        # self.actions.append([   CollisionBackupAction(self.world, 50, 1500),
+        #                         PlaySong(self.world, 2),
+        #                         ])
 
     @rr
     @need_sensors
@@ -640,7 +677,7 @@ class TetheredDriveApp(Tk):
             #        or sensors.light_bumper.center_right:
             elif sensors.light_bumper_center_right > Threshold.Follow \
                     or sensors.light_bumper_center_left > Threshold.Follow \
-                    or sensors.light_bumper_front_left > Threshold.Follow :
+                    or sensors.light_bumper_front_left > Threshold.Follow:
                 # print("LIGHT sensors triggered: {}, {}, {}, {}, {}, {}".format(
                 #      sensors.light_bumper_left,
                 #      sensors.light_bumper_right,
